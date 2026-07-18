@@ -1,0 +1,8 @@
+{
+  "name": "별빛마을을 지켜라",
+  "description": "침공하는 몬스터들의 위협으로부터 아름다운 별빛마을을 실시간 액션으로 수호하는 디펜스 게임",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
