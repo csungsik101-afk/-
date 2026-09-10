@@ -36,6 +36,8 @@ interface GameCanvasProps {
   killedBugCount: number;
   gameMode?: string | null;
   onUpdateBrawlTime?: (elapsed: number) => void;
+  dashTrigger?: number;
+  onUpdateDashCooldown?: (remainingSec: number, totalSec: number) => void;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -60,6 +62,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   killedBugCount,
   gameMode = null,
   onUpdateBrawlTime,
+  dashTrigger = 0,
+  onUpdateDashCooldown,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -99,6 +103,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     brawlTriggered5Min: false,
     // Passive Dagger
     passiveDaggerTimer: 0,
+    // 대시 (Dash) 시스템
+    isDashing: false,
+    dashDurationTimer: 0,
+    dashCooldownTimer: 0,
+    dashCooldownTotal: 2.5,
+    dashTrail: [] as { x: number; y: number; angle: number; alpha: number }[],
+    // ERROR 보스 (5개 페이즈) 상태
+    errorBossPhase: 1,
+    errorBossTimer: 0,
+    errorBossInvisible: false,
+    errorBossInvisTimer: 0,
+    errorBossTeleportComboCount: 0,
+    errorBossComboTimer: 0,
+    errorBossCycleDelayTimer: 0,
+    errorBossVanishZones: [] as { x: number; y: number; radius: number; warningTimer: number; activeTimer: number }[],
+    errorBossAttackCooldown: 0,
+    errorBossHitFlashTimer: 0,
   });
 
   const lastCdEmitRef = useRef<number>(0);
@@ -115,6 +136,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     onUpdateAttackCooldown,
     onTriggerNotification,
     onUpdateBrawlTime,
+    onUpdateDashCooldown,
   });
   useEffect(() => {
     callbacksRef.current = {
@@ -127,8 +149,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       onUpdateAttackCooldown,
       onTriggerNotification,
       onUpdateBrawlTime,
+      onUpdateDashCooldown,
     };
-  }, [onAddStatusEffect, onRemoveStatusEffect, onEnemyKilled, onPlayerTakeDamage, onWaveClear, onUpdateBossStatus, onUpdateAttackCooldown, onTriggerNotification, onUpdateBrawlTime]);
+  }, [onAddStatusEffect, onRemoveStatusEffect, onEnemyKilled, onPlayerTakeDamage, onWaveClear, onUpdateBossStatus, onUpdateAttackCooldown, onTriggerNotification, onUpdateBrawlTime, onUpdateDashCooldown]);
 
   // Keep track of fast-moving inputs in refs to avoid restarting the main loop on every joystick change
   const inputRef = useRef({ moveDirection, isAttackPressed });
@@ -168,6 +191,49 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (gameMode === 'BRAWL') {
       sound.playWaveStart();
       callbacksRef.current.onTriggerNotification?.('⚔️ 난투 모드 돌입! 6분간 생존하며 성장하십시오!', '🔥', 'rose');
+    } else if (gameMode === 'HARDCORE') {
+      const canvas = canvasRef.current;
+      const w = canvas ? canvas.width : 800;
+      const h = canvas ? canvas.height : 600;
+
+      sound.playWaveStart();
+      callbacksRef.current.onTriggerNotification?.('☠️ 하드코어 모드 시작! 최종 보스 ERROR를 격파하십시오!', '⚠️', 'rose');
+
+      state.errorBossPhase = 1;
+      state.errorBossTimer = 0;
+      state.errorBossInvisible = false;
+      state.errorBossInvisTimer = 0;
+      state.errorBossTeleportComboCount = 0;
+      state.errorBossComboTimer = 0;
+      state.errorBossCycleDelayTimer = 0;
+      state.errorBossVanishZones = [];
+      state.errorBossAttackCooldown = 1.0;
+      state.errorBossHitFlashTimer = 0;
+
+      // Spawn Boss ERROR (HP 1000)
+      const errorDef = ENEMY_DEFINITIONS['ERROR_BOSS'];
+      if (errorDef) {
+        state.enemies.push({
+          uid: `boss_error_${Date.now()}`,
+          type: errorDef.id,
+          code: errorDef.code,
+          name: errorDef.name,
+          category: errorDef.category,
+          isBoss: true,
+          x: w / 2,
+          y: h * 0.28,
+          hp: 1000,
+          maxHp: 1000,
+          xp: 1000,
+          speed: 0.9,
+          damage: 8,
+          radius: 46,
+          color: '#EF4444',
+          abilityCooldown: 999,
+          abilityTimer: 0,
+          spawnTime: Date.now(),
+        });
+      }
     } else {
       const canvas = canvasRef.current;
       const w = canvas ? canvas.width : 800;
@@ -275,6 +341,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const dy = en.y - hero.y;
         if (Math.hypot(dx, dy) <= radius + en.radius) {
           en.hp -= explosionDmg;
+          if (en.code === 'ERROR') state.errorBossHitFlashTimer = 0.1;
           state.effects.push({
             uid: `txt_${Date.now()}_${Math.random()}`,
             x: en.x,
@@ -317,6 +384,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           while (diff > Math.PI) diff -= Math.PI * 2;
           if (Math.abs(diff) <= Math.PI / 6) { // 60 degrees is PI / 3 total, so Math.abs <= PI / 6
             en.hp -= slashDmg;
+            if (en.code === 'ERROR') state.errorBossHitFlashTimer = 0.1;
             state.effects.push({
               uid: `txt_${Date.now()}_${Math.random()}`,
               x: en.x,
@@ -431,6 +499,77 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     onSkillTriggerHandled();
   }, [activeSkillTrigger, isPaused, onSkillTriggerHandled, acquiredSkills]);
 
+  // Dash execution helper
+  const executeDash = useCallback(() => {
+    const state = gameStateRef.current;
+    if (state.dashCooldownTimer > 0) return;
+    const isControlDisabled = activeStatusEffects.some((e) => e.type === 'CONTROL_DISABLED');
+    if (isControlDisabled) return;
+
+    state.dashCooldownTimer = state.dashCooldownTotal;
+    state.isDashing = true;
+    state.dashDurationTimer = 0.35; // 0.35s invulnerability
+
+    const hero = state.hero;
+    let dashDx = 0;
+    let dashDy = 0;
+    const keys = state.keysPressed;
+    if (keys['w'] || keys['arrowup']) dashDy -= 1;
+    if (keys['s'] || keys['arrowdown']) dashDy += 1;
+    if (keys['a'] || keys['arrowleft']) dashDx -= 1;
+    if (keys['d'] || keys['arrowright']) dashDx += 1;
+    const currentMoveDir = inputRef.current.moveDirection;
+    if (currentMoveDir.x !== 0 || currentMoveDir.y !== 0) {
+      dashDx = currentMoveDir.x;
+      dashDy = currentMoveDir.y;
+    }
+
+    let angle = hero.angle;
+    if (dashDx !== 0 || dashDy !== 0) {
+      angle = Math.atan2(dashDy, dashDx);
+    }
+    const dashDist = 140;
+
+    // Create ghost afterimage trail
+    for (let t = 0; t <= 3; t++) {
+      const frac = t / 3;
+      state.dashTrail.push({
+        x: hero.x + Math.cos(angle) * dashDist * frac,
+        y: hero.y + Math.sin(angle) * dashDist * frac,
+        angle: angle,
+        alpha: 0.85 - frac * 0.15,
+      });
+    }
+
+    const canvas = canvasRef.current;
+    const w = canvas ? canvas.width : 800;
+    const h = canvas ? canvas.height : 600;
+    hero.x = Math.max(hero.radius, Math.min(w - hero.radius, hero.x + Math.cos(angle) * dashDist));
+    hero.y = Math.max(hero.radius, Math.min(h - hero.radius, hero.y + Math.sin(angle) * dashDist));
+    hero.angle = angle;
+
+    sound.playSlash();
+    state.effects.push({
+      uid: `dash_txt_${Date.now()}`,
+      x: hero.x,
+      y: hero.y - 25,
+      type: 'TEXT',
+      text: '⚡ 대시! (무적)',
+      color: '#38BDF8',
+      duration: 0.6,
+      maxDuration: 0.6,
+    });
+  }, [activeStatusEffects]);
+
+  // Dash trigger from HUD or parent
+  const lastDashTriggerRef = useRef<number>(0);
+  useEffect(() => {
+    if (dashTrigger && dashTrigger > lastDashTriggerRef.current) {
+      lastDashTriggerRef.current = dashTrigger;
+      executeDash();
+    }
+  }, [dashTrigger, executeDash]);
+
   // Keyboard & Mouse/Touch Event Listeners
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -438,6 +577,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       gameStateRef.current.keysPressed[e.key.toLowerCase()] = true;
+      if (e.code === 'Space' || e.key === 'Shift') {
+        const target = e.target as HTMLElement;
+        if (!target || (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA')) {
+          e.preventDefault();
+          executeDash();
+        }
+      }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       gameStateRef.current.keysPressed[e.key.toLowerCase()] = false;
@@ -528,30 +674,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const state = gameStateRef.current;
           const hero = state.hero;
 
-          // Local Player Damage Application with Shield Absorption (10-11)
+          // Local Player Damage Application with Dash Invulnerability & Defense & Shield
           const takeDamageLocal = (dmg: number, isInstantDeath = false) => {
             if (isInstantDeath) {
               callbacksRef.current.onPlayerTakeDamage(dmg, true);
               return;
             }
+            // 1. Dash Invulnerability check
+            if (state.isDashing || state.dashDurationTimer > 0) {
+              return; // Completely invulnerable during dash
+            }
+
+            // 2. Defense Stat Damage Mitigation
+            let mitigatedDmg = dmg;
+            if (stats.defense && stats.defense > 0) {
+              const reduction = Math.min(mitigatedDmg * 0.75, stats.defense * 0.5);
+              mitigatedDmg = Math.max(1, mitigatedDmg - reduction);
+            }
+
             const shieldSkill = acquiredSkills.find((s) => s.definition.code === '10-11');
             if (shieldSkill && state.shieldHp !== undefined && state.shieldHp > 0) {
-              if (state.shieldHp >= dmg) {
-                state.shieldHp -= dmg;
+              if (state.shieldHp >= mitigatedDmg) {
+                state.shieldHp -= mitigatedDmg;
                 sound.playHit();
                 state.effects.push({
                   uid: `shield_absorb_${Date.now()}_${Math.random()}`,
                   x: hero.x,
                   y: hero.y - 25,
                   type: 'TEXT',
-                  text: `🛡️ 보호막 흡수 (-${dmg})`,
+                  text: `🛡️ 보호막 흡수 (-${mitigatedDmg.toFixed(1)})`,
                   color: '#60A5FA',
                   duration: 0.8,
                   maxDuration: 0.8,
                 });
                 return;
               } else {
-                const remainingDmg = dmg - state.shieldHp;
+                const remainingDmg = mitigatedDmg - state.shieldHp;
                 state.effects.push({
                   uid: `shield_break_${Date.now()}`,
                   x: hero.x,
@@ -568,7 +726,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 return;
               }
             }
-            callbacksRef.current.onPlayerTakeDamage(dmg);
+            callbacksRef.current.onPlayerTakeDamage(mitigatedDmg);
           };
 
           // --- PASSIVE SKILLS UPDATES ---
@@ -780,7 +938,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     totalDmg *= 1.025; // 몬스터에게 2.5% 공격력 증가
                   }
 
+                  // ERROR 보스 3 & 4페이즈 은신 중 받는 피해 감소
+                  if (en.code === 'ERROR') {
+                    if (state.errorBossPhase === 3 && state.errorBossInvisible) {
+                      totalDmg *= 0.5; // 3페이즈: 50% 피해 감소
+                    } else if (state.errorBossPhase === 4 && state.errorBossInvisible) {
+                      totalDmg *= 0.25; // 4페이즈: 75% 피해 대폭 감소
+                    }
+                  }
+
                   en.hp -= totalDmg;
+                  if (en.code === 'ERROR') state.errorBossHitFlashTimer = 0.1;
 
                   // 넉백 파워 연산
                   let pushForce = 0;
@@ -870,7 +1038,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 let finalDmg = p.damage;
                 if (hasGoAway) finalDmg *= 1.025;
 
+                // ERROR 보스 3 & 4페이즈 은신 중 받는 피해 감소
+                if (en.code === 'ERROR') {
+                  if (state.errorBossPhase === 3 && state.errorBossInvisible) {
+                    finalDmg *= 0.5; // 3페이즈: 50% 피해 감소
+                  } else if (state.errorBossPhase === 4 && state.errorBossInvisible) {
+                    finalDmg *= 0.25; // 4페이즈: 75% 피해 대폭 감소
+                  }
+                }
+
                 en.hp -= finalDmg;
+                if (en.code === 'ERROR') state.errorBossHitFlashTimer = 0.1;
 
                 // 넉백 파워 연산
                 let pushForce = 0;
@@ -1178,11 +1356,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               en.y += (dy / dist) * mobSpeed * dt;
             }
 
-            // Collision with hero -> deal damage
-            if (dist <= hero.radius + en.radius) {
+            // Collision with hero -> deal damage (일반 몬스터만 몸통 충돌 피해, ERROR 보스는 120° 1칸 부채꼴 공격으로 타격)
+            if (dist <= hero.radius + en.radius && en.code !== 'ERROR') {
               if (time - state.lastPlayerHitTime >= 800) {
                 state.lastPlayerHitTime = time;
-                callbacksRef.current.onPlayerTakeDamage(en.damage);
+                takeDamageLocal(en.damage);
                 sound.playHit();
 
                 // 3-7 Impersonator ability: touching player disables control for 3s
@@ -1416,6 +1594,204 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   }
                 }
               }
+            } else if (en.code === 'ERROR') {
+              // ERROR 보스: 1000 체력 기반 5단계 페이즈 판정
+              const hp = en.hp;
+              let phase = 1;
+              if (hp > 800) {
+                phase = 1;
+              } else if (hp > 600) {
+                phase = 2;
+              } else if (hp > 400) {
+                phase = 3;
+              } else if (hp > 200) {
+                phase = 4;
+              } else {
+                phase = 5;
+              }
+              state.errorBossPhase = phase;
+              currentBossName = `ERROR [Phase ${phase}] (체력: ${Math.max(0, Math.ceil(en.hp))}/1000)`;
+              currentBossHp = Math.max(0, en.hp);
+              currentBossMaxHp = en.maxHp;
+
+              // ERROR 보스 120° 2칸 부채꼴 공격 메커니즘
+              state.errorBossAttackCooldown -= dt;
+              const distToHero = Math.hypot(hero.x - en.x, hero.y - en.y);
+              const twoTileReach = en.radius + 80; // 2칸 사거리 (gridSize 40px * 2 = 80px)
+
+              // 사거리 내 접근 시 120° 부채꼴 공격 실행
+              if (state.errorBossAttackCooldown <= 0 && distToHero <= twoTileReach + hero.radius + 15) {
+                state.errorBossAttackCooldown = phase === 5 ? 0.9 : 1.25;
+                const attackAngle = Math.atan2(hero.y - en.y, hero.x - en.x);
+                sound.playSlash();
+
+                // 공격 시 공격 범위 시각화 (120° 2칸 붉은색 부채꼴)
+                state.effects.push({
+                  uid: `error_slash_${Date.now()}_${Math.random()}`,
+                  x: en.x,
+                  y: en.y,
+                  type: 'SLASH',
+                  radius: twoTileReach,
+                  angle: attackAngle,
+                  arcAngle: (120 * Math.PI) / 180, // 120도 부채꼴
+                  color: '#EF4444',
+                  duration: 0.28,
+                  maxDuration: 0.28,
+                });
+
+                // 타격 판정 (거리 2칸 & 120도 부채꼴 범위)
+                if (distToHero <= twoTileReach + hero.radius) {
+                  const angleToHero = Math.atan2(hero.y - en.y, hero.x - en.x);
+                  const diff = Math.abs((angleToHero - attackAngle + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+                  if (diff <= (60 * Math.PI) / 180) { // 60도 (총 120도)
+                    if (!state.isDashing) {
+                      takeDamageLocal(en.damage);
+                      sound.playHit();
+                      if (phase === 1) {
+                        applyDebuffSafe('CONTROL_DISABLED', 2);
+                        state.effects.push({
+                          uid: `stun_txt_${Date.now()}`,
+                          x: hero.x,
+                          y: hero.y - 25,
+                          type: 'TEXT',
+                          text: '💫 2초 기절! (ERROR 피격)',
+                          color: '#EF4444',
+                          duration: 1.0,
+                          maxDuration: 1.0,
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+
+              // 1페이즈 (1000-801): 부채꼴 피격 시 2초 기절
+
+              // 2페이즈 (800-601): 7초 간격으로 무작위 5개 구역 소멸
+              if (phase === 2) {
+                state.errorBossTimer += dt;
+                if (state.errorBossTimer >= 7.0) {
+                  state.errorBossTimer = 0;
+                  sound.playWarning();
+                  callbacksRef.current.onTriggerNotification?.('⚠️ [ERROR 2페이즈] 5개 구역 소멸 가동!', '💥', 'rose');
+                  for (let i = 0; i < 5; i++) {
+                    state.errorBossVanishZones.push({
+                      x: Math.random() * (w - 180) + 90,
+                      y: Math.random() * (h - 180) + 90,
+                      radius: 54,
+                      warningTimer: 1.8,
+                      activeTimer: 5.0,
+                    });
+                  }
+                }
+              }
+
+              // 3페이즈 (600-401): 9초 간격 3초 투명화, 받는 피해 감소, 공격력 증가
+              if (phase === 3) {
+                state.errorBossTimer += dt;
+                if (state.errorBossTimer >= 9.0) {
+                  state.errorBossTimer = 0;
+                  state.errorBossInvisible = true;
+                  state.errorBossInvisTimer = 3.0;
+                  en.damage = 12; // 50% 공격력 증가
+                  sound.playWarning();
+                  callbacksRef.current.onTriggerNotification?.('👻 [ERROR 3페이즈] 3초 투명화 & 피해 50% 감소 & 공격력 증가!', '👁️', 'purple');
+                }
+              }
+
+              // 4페이즈 (400-201): 7초 간격 4초 투명화, 받는 피해 대폭 감소, 공격력 증가
+              if (phase === 4) {
+                state.errorBossTimer += dt;
+                if (state.errorBossTimer >= 7.0) {
+                  state.errorBossTimer = 0;
+                  state.errorBossInvisible = true;
+                  state.errorBossInvisTimer = 4.0;
+                  en.damage = 16; // 100% 공격력 증가
+                  sound.playWarning();
+                  callbacksRef.current.onTriggerNotification?.('💀 [ERROR 4페이즈] 4초 은신 & 피해 75% 감소 & 공격력 대폭 증폭!', '⚠️', 'rose');
+                }
+              }
+
+              // 투명화 타이머 처리
+              if (state.errorBossInvisTimer > 0) {
+                state.errorBossInvisTimer -= dt;
+                if (state.errorBossInvisTimer <= 0) {
+                  state.errorBossInvisible = false;
+                  if (phase !== 5) en.damage = 8;
+                }
+              }
+
+              // 5페이즈 (200-1): 5초 간격 3초 투명화, 6칸 이내 순간이동, 3연타 공격, 6초 딜레이
+              if (phase === 5) {
+                if (state.errorBossCycleDelayTimer > 0) {
+                  state.errorBossCycleDelayTimer -= dt;
+                } else {
+                  state.errorBossTimer += dt;
+                  if (state.errorBossTimer >= 5.0) {
+                    state.errorBossTimer = 0;
+                    state.errorBossInvisible = true;
+                    state.errorBossInvisTimer = 3.0;
+
+                    // 6칸 (약 180~240px) 이내 순간이동
+                    const teleportAngle = Math.random() * Math.PI * 2;
+                    const teleportDist = 70 + Math.random() * 140;
+                    en.x = Math.max(50, Math.min(w - 50, hero.x + Math.cos(teleportAngle) * teleportDist));
+                    en.y = Math.max(50, Math.min(h - 50, hero.y + Math.sin(teleportAngle) * teleportDist));
+
+                    sound.playWarning();
+                    state.effects.push({
+                      uid: `teleport_glitch_${Date.now()}`,
+                      x: en.x,
+                      y: en.y,
+                      type: 'EXPLOSION',
+                      radius: 65,
+                      color: '#DC2626',
+                      duration: 0.6,
+                      maxDuration: 0.6,
+                    });
+
+                    state.errorBossTeleportComboCount = 3;
+                    state.errorBossComboTimer = 0.3;
+                    state.errorBossCycleDelayTimer = 6.0; // 6초 딜레이
+                    callbacksRef.current.onTriggerNotification?.('⚡ [ERROR 5페이즈] 6칸 순간이동 & 3연타 폭주 공격!', '☠️', 'rose');
+                  }
+                }
+
+                // 3연타 공격 진행 (120° 2칸 부채꼴)
+                if (state.errorBossTeleportComboCount > 0) {
+                  state.errorBossComboTimer -= dt;
+                  if (state.errorBossComboTimer <= 0) {
+                    state.errorBossTeleportComboCount--;
+                    state.errorBossComboTimer = 0.45;
+
+                    const strikeAngle = Math.atan2(hero.y - en.y, hero.x - en.x);
+                    const twoTileReach = en.radius + 80; // 2칸 사거리
+                    sound.playSlash();
+
+                    state.effects.push({
+                      uid: `combo_slash_${Date.now()}_${state.errorBossTeleportComboCount}`,
+                      x: en.x,
+                      y: en.y,
+                      type: 'SLASH',
+                      radius: twoTileReach,
+                      angle: strikeAngle,
+                      arcAngle: (120 * Math.PI) / 180, // 120도
+                      color: '#DC2626',
+                      duration: 0.3,
+                      maxDuration: 0.3,
+                    });
+
+                    const distHero = Math.hypot(hero.x - en.x, hero.y - en.y);
+                    const angleToHero = Math.atan2(hero.y - en.y, hero.x - en.x);
+                    const diff = Math.abs((angleToHero - strikeAngle + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+
+                    if (distHero <= twoTileReach + hero.radius && diff <= (60 * Math.PI) / 180 && !state.isDashing) {
+                      takeDamageLocal(7);
+                      sound.playHit();
+                    }
+                  }
+                }
+              }
             }
 
             // Check if killed
@@ -1430,11 +1806,66 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             state.enemies.push(...extraEnemiesToSpawn);
           }
 
+          // ERROR Boss Phase 2: 소멸 구역 시뮬레이션
+          state.errorBossVanishZones = state.errorBossVanishZones.filter((vz) => {
+            if (vz.warningTimer > 0) {
+              vz.warningTimer -= dt;
+              return true;
+            }
+            vz.activeTimer -= dt;
+            if (vz.activeTimer > 0) {
+              const distToHero = Math.hypot(hero.x - vz.x, hero.y - vz.y);
+              if (distToHero <= vz.radius + hero.radius && !state.isDashing) {
+                if (time - state.lastPlayerHitTime >= 500) {
+                  state.lastPlayerHitTime = time;
+                  takeDamageLocal(4);
+                  sound.playHit();
+                  state.effects.push({
+                    uid: `vz_dmg_${Date.now()}`,
+                    x: hero.x,
+                    y: hero.y - 20,
+                    type: 'TEXT',
+                    text: '💥 구역 소멸 피해 (-4)',
+                    color: '#DC2626',
+                    duration: 0.6,
+                    maxDuration: 0.6,
+                  });
+                }
+              }
+              return true;
+            }
+            return false;
+          });
+
+          // 대시 상태 및 쿨다운 업데이트
+          if (state.dashDurationTimer > 0) {
+            state.dashDurationTimer -= dt;
+            if (state.dashDurationTimer <= 0) {
+              state.isDashing = false;
+            }
+          }
+          if (state.dashCooldownTimer > 0) {
+            state.dashCooldownTimer = Math.max(0, state.dashCooldownTimer - dt);
+            callbacksRef.current.onUpdateDashCooldown?.(state.dashCooldownTimer, state.dashCooldownTotal);
+          }
+
+          // 대시 잔상 서서히 사라짐
+          state.dashTrail = state.dashTrail.filter((t) => {
+            t.alpha -= dt * 2.5;
+            return t.alpha > 0;
+          });
+
           callbacksRef.current.onUpdateBossStatus(currentBossName, currentBossHp, currentBossMaxHp);
 
           // Check if Wave cleared! (All enemies dead or all Bosses and target Bugs cleared)
           if (gameMode === 'BRAWL') {
             if (state.brawlBossesSpawned && state.enemies.filter((e) => e.isBoss).length === 0 && !state.waveTransitioning) {
+              state.waveTransitioning = true;
+              callbacksRef.current.onWaveClear();
+            }
+          } else if (gameMode === 'HARDCORE') {
+            const errorBoss = state.enemies.find((e) => e.code === 'ERROR');
+            if (!errorBoss && state.waveSpawned && !state.waveTransitioning) {
               state.waveTransitioning = true;
               callbacksRef.current.onWaveClear();
             }
@@ -1459,6 +1890,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           // --- 6. VISUAL EFFECTS SIMULATION ---
+          if (state.errorBossHitFlashTimer > 0) {
+            state.errorBossHitFlashTimer = Math.max(0, state.errorBossHitFlashTimer - dt);
+          }
+
           state.effects = state.effects.filter((ef) => {
             ef.duration -= dt;
             return ef.duration > 0;
@@ -1514,6 +1949,46 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               ctx.strokeStyle = '#A855F7';
               ctx.lineWidth = 2;
               ctx.stroke();
+            }
+            ctx.restore();
+          });
+
+          // Draw ERROR Boss Vanish Zones (Phase 2)
+          state.errorBossVanishZones.forEach((vz) => {
+            ctx.save();
+            if (vz.warningTimer > 0) {
+              // Warning pulse ring
+              ctx.beginPath();
+              ctx.arc(vz.x, vz.y, vz.radius, 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(239, 68, 68, ${0.15 + 0.15 * Math.sin(time / 60)})`;
+              ctx.fill();
+              ctx.strokeStyle = '#EF4444';
+              ctx.lineWidth = 3;
+              ctx.setLineDash([6, 6]);
+              ctx.stroke();
+
+              ctx.fillStyle = '#EF4444';
+              ctx.font = 'bold 11px sans-serif';
+              ctx.textAlign = 'center';
+              ctx.fillText('⚠️ 구역 소멸 경고', vz.x, vz.y + 4);
+            } else if (vz.activeTimer > 0) {
+              // Collapsing active void hole with digital glitch styling
+              const grad = ctx.createRadialGradient(vz.x, vz.y, 4, vz.x, vz.y, vz.radius);
+              grad.addColorStop(0, '#000000');
+              grad.addColorStop(0.7, '#881337');
+              grad.addColorStop(1, 'rgba(225, 29, 72, 0)');
+              ctx.beginPath();
+              ctx.arc(vz.x, vz.y, vz.radius, 0, Math.PI * 2);
+              ctx.fillStyle = grad;
+              ctx.fill();
+              ctx.strokeStyle = '#F43F5E';
+              ctx.lineWidth = 2.5;
+              ctx.stroke();
+
+              ctx.fillStyle = '#F43F5E';
+              ctx.font = 'bold 10px monospace';
+              ctx.textAlign = 'center';
+              ctx.fillText('[VANISH ZONE]', vz.x, vz.y + 4);
             }
             ctx.restore();
           });
@@ -1598,6 +2073,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.save();
             ctx.translate(en.x, en.y);
 
+            // ERROR 보스 은폐(스텔스) 상태 처리:
+            // 테두리도 전혀 안 보이게 해서 아예 어디 있는지 모르게 완전 은폐
+            // 피격 시에만 형체만 붉은 색으로 점멸하며 0.1초간 보이게 처리
+            if (en.code === 'ERROR' && state.errorBossInvisible) {
+              if (state.errorBossHitFlashTimer > 0) {
+                ctx.beginPath();
+                ctx.arc(0, 0, en.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.9)';
+                ctx.shadowColor = '#EF4444';
+                ctx.shadowBlur = 15;
+                ctx.fill();
+              }
+              ctx.restore();
+              return;
+            }
+
             // Boss glowing circle
             if (en.isBoss) {
               ctx.beginPath();
@@ -1660,6 +2151,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 }
                 ctx.restore();
               }
+            } else if (en.code === 'ERROR') {
+              // 글리치 디지털 큐브 파편 회전
+              const cubeCount = 4;
+              for (let ci = 0; ci < cubeCount; ci++) {
+                const cAngle = (Math.PI * 2 * ci) / cubeCount + (time / 300);
+                const cx = Math.cos(cAngle) * (en.radius + 14);
+                const cy = Math.sin(cAngle) * (en.radius + 14);
+                ctx.fillStyle = '#F43F5E';
+                ctx.fillRect(cx - 3, cy - 3, 6, 6);
+              }
             }
 
             // Body
@@ -1690,9 +2191,36 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.restore();
           });
 
+          // Draw Dash Ghost Trail
+          state.dashTrail.forEach((t) => {
+            ctx.save();
+            ctx.translate(t.x, t.y);
+            ctx.rotate(t.angle);
+            ctx.globalAlpha = t.alpha;
+            ctx.beginPath();
+            ctx.arc(0, 0, hero.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#38BDF8';
+            ctx.shadowColor = '#0284C7';
+            ctx.shadowBlur = 10;
+            ctx.fill();
+            ctx.restore();
+          });
+
           // Draw Sugar Gnome Hero
           ctx.save();
           ctx.translate(hero.x, hero.y);
+
+          // Dash Invulnerability Aura
+          if (state.isDashing || state.dashDurationTimer > 0) {
+            ctx.beginPath();
+            ctx.arc(0, 0, hero.radius + 8, 0, Math.PI * 2);
+            ctx.strokeStyle = '#38BDF8';
+            ctx.lineWidth = 3;
+            ctx.shadowColor = '#0EA5E9';
+            ctx.shadowBlur = 14;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          }
 
           // Draw Shield ring if active
           const drawShieldSkill = acquiredSkills.find((s) => s.definition.code === '10-11');
@@ -1833,15 +2361,47 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const isBlackout = activeStatusEffects.some((e) => e.type === 'BLACKOUT');
           if (isBlackout) {
             ctx.save();
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.94)';
-            ctx.fillRect(0, 0, w, h);
-            ctx.fillStyle = '#A855F7';
-            ctx.font = 'bold 22px sans-serif';
+            const playerVisionRadius = 140; // Player's visible sight radius during blackout
+
+            // 1. Darken everything except the circular field of vision around the player
+            ctx.beginPath();
+            ctx.rect(0, 0, w, h);
+            ctx.arc(hero.x, hero.y, playerVisionRadius, 0, Math.PI * 2, true);
+            ctx.fillStyle = 'rgba(2, 6, 23, 0.95)';
+            ctx.fill();
+
+            // 2. Smooth gradient vignette on the edge of the player's vision
+            const visionGrad = ctx.createRadialGradient(
+              hero.x, hero.y, playerVisionRadius * 0.45,
+              hero.x, hero.y, playerVisionRadius
+            );
+            visionGrad.addColorStop(0, 'rgba(2, 6, 23, 0)');
+            visionGrad.addColorStop(0.7, 'rgba(2, 6, 23, 0.35)');
+            visionGrad.addColorStop(1, 'rgba(2, 6, 23, 0.95)');
+
+            ctx.beginPath();
+            ctx.arc(hero.x, hero.y, playerVisionRadius, 0, Math.PI * 2);
+            ctx.fillStyle = visionGrad;
+            ctx.fill();
+
+            // 3. Subtle purple radar outline around the player's visible area
+            ctx.beginPath();
+            ctx.arc(hero.x, hero.y, playerVisionRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.6)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 6]);
+            ctx.stroke();
+
+            // 4. Player vision alert notice at top
+            ctx.fillStyle = '#E9D5FF';
+            ctx.font = 'bold 16px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText('👁️ 암전 상태! 설탕노움의 시야가 차단되었습니다!', w / 2, h / 2);
-            ctx.font = '14px sans-serif';
+            ctx.shadowColor = '#000000';
+            ctx.shadowBlur = 6;
+            ctx.fillText('👁️ 암전 상태! 플레이어 주변 시야만 확보됩니다!', w / 2, 44);
+            ctx.font = '12px sans-serif';
             ctx.fillStyle = '#CBD5E1';
-            ctx.fillText('침착하게 방향키로 이동하며 생존하세요!', w / 2, h / 2 + 30);
+            ctx.fillText('시야 밖에서 접근하는 적들을 경계하며 생존하세요!', w / 2, 66);
             ctx.restore();
           }
         }

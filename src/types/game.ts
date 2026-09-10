@@ -51,6 +51,9 @@ export interface PlayerStats {
   rangePoints: number;    // 0~30
   regenSpeed: number;     // 7-6: level * 1.2%
   regenSpeedPoints: number; // 0~10
+  sawbladeSpeedPoints?: number;
+  sawbladeSpeedBonus?: number;
+  defense: number;        // Total defense from blueprints/equipment
 }
 
 export interface SkillDefinition {
@@ -157,7 +160,38 @@ export interface WaveInfo {
 }
 
 export type PlayerClassType = 'ASSASSIN' | 'TANKER' | 'BERSERKER' | 'MAGE';
-export type GameModeType = 'STORY' | 'BRAWL';
+export type GameModeType = 'STORY' | 'BRAWL' | 'HARDCORE';
+
+export type BlueprintType = 'WEAPON' | 'SUB_TOOL' | 'SUB_ARMOR';
+
+export interface BlueprintItem {
+  id: string;
+  name: string;
+  type: BlueprintType;
+  typeLabel: string;
+  index: number; // 1 to 5
+  effectDescription: string;
+  statsBonus?: {
+    attackPercent?: number;      // e.g. 0.05 for +5%
+    attackFlat?: number;         // e.g. 10 for +10
+    attackSpeedPercent?: number; // e.g. -0.05 for -5%
+    rangeBlocks?: number;        // e.g. +3 for +3칸
+    defenseFlat?: number;        // e.g. +5 for 방어력 +5
+    moveSpeedPercent?: number;   // e.g. -0.05 for -5%
+  };
+  icon: string;
+}
+
+export interface BlueprintSynergy {
+  id: string;
+  name: string;
+  recipe: [number, number, number]; // [weaponIndex, toolIndex, armorIndex]
+  effectDescription: string;
+  statsBonus: {
+    attackPercent?: number; // e.g. 0.03 for +3%
+    hpFlat?: number;        // e.g. +5 for 체력 +5
+  };
+}
 
 export interface ClassStatsConfig {
   attack: number;

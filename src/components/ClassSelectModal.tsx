@@ -11,7 +11,7 @@ interface ClassSelectModalProps {
 
 export const ClassSelectModal: React.FC<ClassSelectModalProps> = ({ isOpen, onSelect }) => {
   const [selected, setSelected] = useState<PlayerClassType | null>(null);
-  const [storyStep, setStoryStep] = useState<number>(0); // 0~3 dialogue, 4: selection
+  const [storyStep, setStoryStep] = useState<number>(4); // Default to 4 (instant class selection, no blocking black screens)
 
   if (!isOpen) return null;
 
@@ -203,9 +203,17 @@ export const ClassSelectModal: React.FC<ClassSelectModalProps> = ({ isOpen, onSe
         <div className="absolute bottom-0 right-1/4 w-36 h-36 bg-emerald-500/10 rounded-full blur-[60px] pointer-events-none" />
 
         <div className="p-3.5 sm:p-4 text-center relative z-10">
-          <span className="inline-block px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded-full text-indigo-400 text-[9px] font-semibold uppercase tracking-wider mb-1">
-            Character Class System
-          </span>
+          <div className="flex items-center justify-center gap-2 mb-1">
+            <span className="inline-block px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded-full text-indigo-400 text-[9px] font-semibold uppercase tracking-wider">
+              Character Class System
+            </span>
+            <button
+              onClick={() => setStoryStep(0)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold text-amber-400/80 hover:text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 transition-all cursor-pointer"
+            >
+              📜 오프닝 스토리 보기
+            </button>
+          </div>
           <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight mb-0.5">
             모험을 시작할 클래스를 선택하세요
           </h2>

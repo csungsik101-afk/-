@@ -6,12 +6,14 @@ interface SkillSelectModalProps {
   isOpen: boolean;
   choices: SkillDefinition[];
   onSelectSkill: (skill: SkillDefinition) => void;
+  remainingPicks?: number;
 }
 
 export const SkillSelectModal: React.FC<SkillSelectModalProps> = ({
   isOpen,
   choices,
   onSelectSkill,
+  remainingPicks = 1,
 }) => {
   if (!isOpen || choices.length === 0) return null;
 
@@ -33,17 +35,19 @@ export const SkillSelectModal: React.FC<SkillSelectModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-md animate-fade-in">
       <div className="bg-slate-900 border-2 border-amber-500/50 rounded-xl max-w-lg w-full p-3.5 shadow-2xl flex flex-col items-center">
         {/* Title */}
-        <div className="flex items-center gap-1 mb-1 bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-rose-500/20 px-2.5 py-0.5 rounded-full border border-amber-500/30">
+        <div className="flex items-center gap-1.5 mb-1 bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-rose-500/20 px-2.5 py-0.5 rounded-full border border-amber-500/30">
           <Sparkles className="w-3 h-3 text-amber-400 animate-spin" />
           <span className="text-[9px] font-black text-amber-300 uppercase tracking-wider">
-            누적 XP 100 달성 특수 보상
+            {remainingPicks > 1 ? `스킬 뽑기 가챠 (${remainingPicks}회 남음)` : '누적 XP 100 달성 특수 보상'}
           </span>
         </div>
         <h2 className="text-sm font-black text-white text-center mb-0.5">
-          별빛 마을 유물 스킬 선택 (1개 획득)
+          별빛 마을 유물 스킬 선택 {remainingPicks > 1 && <span className="text-amber-400 font-mono">[{remainingPicks}회 남음]</span>}
         </h2>
         <p className="text-[9px] text-slate-400 text-center mb-2.5 max-w-sm">
-          별빛 마을의 고대 유물 중 3개가 랜덤으로 나타났습니다! 유물을 선택하세요.
+          {remainingPicks > 1
+            ? `하드코어 특별 보급으로 강력한 스킬을 총 20회 선택할 수 있습니다! (남은 횟수: ${remainingPicks}회)`
+            : '별빛 마을의 고대 유물 중 3개가 랜덤으로 나타났습니다! 유물을 선택하세요.'}
         </p>
 
         {/* 3 Skill Cards */}

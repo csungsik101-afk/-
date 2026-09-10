@@ -188,6 +188,23 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     abilityName: '3단계 페이즈 전투',
     description: '최종 보스 별빛. 150 체력, 이동속도 0.8, 공격력 7, 공격속도 1.5. 1페이즈(랜덤 광역폭격), 2페이즈(주변 자폭폭파), 3페이즈(회전 톱날 방어벽).'
   },
+  'ERROR_BOSS': {
+    id: 'ERROR_BOSS' as any,
+    code: 'ERROR',
+    name: 'ERROR (하드코어 최종 보스)',
+    category: 'BUG',
+    isBoss: true,
+    hp: 1000,
+    maxHp: 1000,
+    xp: 1000,
+    speed: 0.9,
+    damage: 10,
+    radius: 44,
+    color: '#EF4444',
+    icon: 'AlertTriangle',
+    abilityName: '5단계 시스템 에러 페이즈',
+    description: '체력 1000의 하드코어 전용 최종 보스. 1단계(피격 시 2초 기절), 2단계(7초마다 5개 구역 소멸), 3단계(9초 간격 3초 투명화/피해감소/공격증가), 4단계(7초 간격 4초 투명화/피해대폭감소), 5단계(5초 간격 은신 6칸 순간이동 3연타).'
+  },
   '11-1_BOT': {
     id: '11-1_BOT',
     code: '11-1',

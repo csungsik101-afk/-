@@ -1,6 +1,6 @@
 import React from 'react';
 import { AcquiredSkill } from '../types/game';
-import { Sword, Bomb, Sparkles, Zap, ShieldCheck, HeartHandshake, Syringe } from 'lucide-react';
+import { Sword, Bomb, Sparkles, Zap, ShieldCheck, HeartHandshake, Syringe, Wind } from 'lucide-react';
 
 interface MobileActionPadProps {
   acquiredSkills: AcquiredSkill[];
@@ -9,6 +9,9 @@ interface MobileActionPadProps {
   onSetAttackPressed?: (pressed: boolean) => void;
   attackCdRemaining?: number;
   attackCdTotal?: number;
+  onDash?: () => void;
+  dashCdRemaining?: number;
+  dashCdTotal?: number;
 }
 
 export const MobileActionPad: React.FC<MobileActionPadProps> = ({
@@ -18,6 +21,9 @@ export const MobileActionPad: React.FC<MobileActionPadProps> = ({
   onSetAttackPressed,
   attackCdRemaining = 0,
   attackCdTotal = 0,
+  onDash,
+  dashCdRemaining = 0,
+  dashCdTotal = 2.5,
 }) => {
   const getSkillIcon = (iconName: string) => {
     switch (iconName) {
@@ -82,6 +88,41 @@ export const MobileActionPad: React.FC<MobileActionPadProps> = ({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* 대시 (회피 기동) 버튼 */}
+      {onDash && (
+        <div className="flex flex-col items-center gap-1.5 mb-1">
+          <button
+            onTouchStart={(e) => {
+              e.stopPropagation();
+              if (dashCdRemaining <= 0) onDash();
+            }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              if (dashCdRemaining <= 0) onDash();
+            }}
+            disabled={dashCdRemaining > 0}
+            className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl font-black text-white flex flex-col items-center justify-center shadow-xl border-2 transition-transform select-none relative overflow-hidden active:scale-95 ${
+              dashCdRemaining <= 0
+                ? 'bg-gradient-to-br from-cyan-600 to-blue-700 border-cyan-400 shadow-cyan-500/30'
+                : 'bg-slate-900 border-slate-800 opacity-60'
+            }`}
+            title="대시 회피 기동 (Space / Shift)"
+          >
+            <Wind className={`w-6 h-6 ${dashCdRemaining <= 0 ? 'text-cyan-200 animate-pulse' : 'text-slate-500'}`} />
+            <span className="text-[10px] font-black tracking-tight mt-0.5">대시</span>
+
+            {dashCdRemaining > 0 && (
+              <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center backdrop-blur-[1px] z-10">
+                <span className="text-xs font-black font-mono text-cyan-300">
+                  {dashCdRemaining.toFixed(1)}s
+                </span>
+              </div>
+            )}
+          </button>
+          <span className="text-[9px] font-bold text-cyan-400">회피</span>
         </div>
       )}
 

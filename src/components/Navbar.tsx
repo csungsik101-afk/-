@@ -13,6 +13,11 @@ interface NavbarProps {
   onOpenQuests: () => void;
   onOpenStats: () => void;
   onRestart: () => void;
+  onOpenBlueprints?: () => void;
+  blueprintCount?: number;
+  coupons?: number;
+  gameMode?: string;
+  synergyCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -26,6 +31,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenQuests,
   onOpenStats,
   onRestart,
+  onOpenBlueprints,
+  blueprintCount = 0,
+  coupons = 0,
+  gameMode = 'STORY',
+  synergyCount = 0,
 }) => {
   return (
     <header className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 text-white px-4 py-2.5 sticky top-0 z-40 flex items-center justify-between shadow-lg">
@@ -40,12 +50,54 @@ export const Navbar: React.FC<NavbarProps> = ({
           <p className="text-[9px] sm:text-[11px] text-slate-400 font-medium flex items-center gap-1 sm:gap-1.5">
             <span className="hidden sm:inline">실시간 액션 디펜스</span>
             <span className="hidden sm:inline text-slate-600">•</span>
-            <span className="text-amber-400 font-bold">웨이브 {currentWave}</span>
+            {gameMode === 'HARDCORE' ? (
+              <span className="text-rose-400 font-bold flex items-center gap-1">
+                💀 하드코어
+              </span>
+            ) : gameMode === 'BRAWL' ? (
+              <span className="text-orange-400 font-bold flex items-center gap-1">
+                ⚔️ 난투
+              </span>
+            ) : (
+              <span className="text-amber-400 font-bold">웨이브 {currentWave}</span>
+            )}
           </p>
         </div>
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2.5">
+        {/* Blueprint Inventory button */}
+        {onOpenBlueprints && (
+          <button
+            onClick={onOpenBlueprints}
+            className={`relative px-2 py-1.5 sm:px-3 sm:py-1.5 rounded-lg font-bold text-[11px] sm:text-xs flex items-center gap-1.5 transition-all shadow-sm ${
+              coupons > 0
+                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-black animate-pulse ring-2 ring-amber-400'
+                : blueprintCount > 0
+                ? 'bg-slate-800 text-amber-300 hover:bg-slate-700 border border-amber-500/40'
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+            }`}
+            title="설계도 인벤토리 (보유 설계도 및 효과 확인)"
+          >
+            <span className="text-xs">🎒</span>
+            <span className="hidden sm:inline">설계도</span>
+            {coupons > 0 ? (
+              <span className="bg-slate-950 text-amber-300 text-[9px] sm:text-[10px] font-black px-1.5 py-0.2 rounded-full font-mono">
+                쿠폰 {coupons}
+              </span>
+            ) : blueprintCount > 0 ? (
+              <span className="bg-amber-500/20 text-amber-300 text-[9px] sm:text-[10px] font-mono px-1 rounded">
+                {blueprintCount}
+              </span>
+            ) : null}
+            {synergyCount > 0 && (
+              <span className="bg-emerald-500 text-slate-950 text-[9px] sm:text-[10px] font-black px-1.5 py-0.2 rounded-full font-mono flex items-center gap-0.5">
+                ✨{synergyCount}
+              </span>
+            )}
+          </button>
+        )}
+
         {/* Level & Stat allocation button */}
         <button
           onClick={onOpenStats}

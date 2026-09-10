@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Navbar } from './components/Navbar';
 import { HUD } from './components/HUD';
@@ -11,6 +11,9 @@ import { WaveBanner } from './components/WaveBanner';
 import { GameOverModal } from './components/GameOverModal';
 import { ClassSelectModal } from './components/ClassSelectModal';
 import { HomeModeSelect } from './components/HomeModeSelect';
+import { BlueprintSelectionModal } from './components/BlueprintSelectionModal';
+import { BlueprintInventoryModal } from './components/BlueprintInventoryModal';
+import { checkSatisfiedSynergies, calculateBlueprintStats } from './data/blueprints';
 import { PlayerStats, AcquiredSkill, ActiveStatusEffect, QuestState, SkillDefinition, EnemyEntity, PlayerClassType, CLASS_BASE_STATS, GameModeType } from './types/game';
 import { SKILL_DEFINITIONS, WAVE_CONFIGS } from './data/encyclopedia';
 import { sound } from './utils/sound';
@@ -105,6 +108,48 @@ export default function App() {
   const [activeSkillTrigger, setActiveSkillTrigger] = useState<string | null>(null);
   const [attackCdRemaining, setAttackCdRemaining] = useState<number>(0);
   const [attackCdTotal, setAttackCdTotal] = useState<number>(0);
+
+  // Blueprint System State
+  const [coupons, setCoupons] = useState<number>(0);
+  const [ownedBlueprints, setOwnedBlueprints] = useState<string[]>([]);
+  const [isBlueprintSelectionOpen, setIsBlueprintSelectionOpen] = useState<boolean>(false);
+  const [isBlueprintInventoryOpen, setIsBlueprintInventoryOpen] = useState<boolean>(false);
+
+  // Dash System State
+  const [dashTrigger, setDashTrigger] = useState<number>(0);
+  const [dashCdRemaining, setDashCdRemaining] = useState<number>(0);
+  const [dashCdTotal, setDashCdTotal] = useState<number>(2.5);
+  const hardcoreSkillsTriggeredRef = useRef<boolean>(false);
+
+  // Blueprint Synergies & Stats Calculation
+  const activeSynergies = useMemo(() => {
+    return checkSatisfiedSynergies(ownedBlueprints);
+  }, [ownedBlueprints]);
+
+  const bpStats = useMemo(() => {
+    return calculateBlueprintStats(ownedBlueprints, activeSynergies);
+  }, [ownedBlueprints, activeSynergies]);
+
+  // Combined Effective Stats (Player Base + Blueprint & Synergy Modifiers)
+  const effectiveStats = useMemo<PlayerStats>(() => {
+    const baseAtk = stats.attack;
+    const baseSpd = stats.moveSpeed;
+    const baseHp = stats.maxHp;
+    const baseAtkSpd = stats.attackSpeed;
+    const baseRange = stats.range;
+
+    const rangeMultiplier = 1 + (bpStats.rangeBlocks * 0.4);
+
+    return {
+      ...stats,
+      attack: Math.max(0.1, (baseAtk * (1 + bpStats.attackPercent)) + bpStats.attackFlat),
+      attackSpeed: Math.max(0.2, baseAtkSpd * (1 + bpStats.attackSpeedPercent)),
+      moveSpeed: Math.max(0.3, baseSpd * (1 + bpStats.moveSpeedPercent)),
+      maxHp: Math.max(1, baseHp + bpStats.hpFlat),
+      range: Math.max(0.2, baseRange * Math.max(0.1, rangeMultiplier)),
+      defense: bpStats.defenseFlat,
+    };
+  }, [stats, bpStats]);
 
   // Show wave banner briefly when wave starts and restore all HP on stage change
   useEffect(() => {
@@ -303,6 +348,12 @@ export default function App() {
       sawbladeSpeedBonus: 1.0,
     });
     setHp(base.maxHp);
+
+    if (gameMode === 'HARDCORE') {
+      setCoupons(3);
+      setOwnedBlueprints([]);
+      setIsBlueprintSelectionOpen(true);
+    }
   };
 
   // --- STAT UPGRADES ---
@@ -455,6 +506,13 @@ export default function App() {
     setHp((prevHp) => {
       const nextHp = isInstantDeath ? 0 : prevHp - dmg;
       if (nextHp <= 0) {
+        // 하드코어 모드는 단 1회 사망 시 부활 없이 즉시 게임오버 및 리셋
+        if (gameMode === 'HARDCORE') {
+          setIsVictory(false);
+          setIsGameOverOpen(true);
+          return 0;
+        }
+
         // Check Last Strike skill (10-5)
         const hasLastStrike = acquiredSkills.some((s) => s.definition.code === '10-5');
         const alreadyGhost = activeStatusEffects.some((e) => e.type === 'REVIVAL_GHOST');
@@ -473,11 +531,11 @@ export default function App() {
       }
       return nextHp;
     });
-  }, [acquiredSkills, activeStatusEffects]);
+  }, [acquiredSkills, activeStatusEffects, gameMode]);
 
   // --- WAVE CLEAR CALLBACK ---
   const handleWaveClear = useCallback(() => {
-    if (gameMode === 'BRAWL') {
+    if (gameMode === 'BRAWL' || gameMode === 'HARDCORE') {
       sound.playLevelUp();
       setIsVictory(true);
       setIsGameOverOpen(true);
@@ -606,6 +664,12 @@ export default function App() {
     setIsVictory(false);
     setIsSkillSelectOpen(false);
     setIsStatsOpen(false);
+    setCoupons(0);
+    setOwnedBlueprints([]);
+    setIsBlueprintSelectionOpen(false);
+    setIsBlueprintInventoryOpen(false);
+    setDashTrigger(0);
+    setDashCdRemaining(0);
     setQuests([
       {
         id: 'q1',
@@ -618,6 +682,40 @@ export default function App() {
         claimed: false,
       },
     ]);
+    hardcoreSkillsTriggeredRef.current = false;
+  };
+
+  // Blueprint Confirmation Handler
+  const handleConfirmBlueprints = (selectedBlueprintIds: string[], remainingCoupons: number) => {
+    setOwnedBlueprints(selectedBlueprintIds);
+    setCoupons(remainingCoupons);
+    setIsBlueprintSelectionOpen(false);
+
+    const synergies = checkSatisfiedSynergies(selectedBlueprintIds);
+    if (synergies.length > 0) {
+      addNotification(`📜 조합 ${synergies.length}개 완성 완료!`, '✨', 'emerald');
+      sound.playLevelUp();
+    } else {
+      sound.playSlash();
+    }
+
+    // 하드코어 모드 시작 시 20회 스킬 뽑기 발동
+    if (gameMode === 'HARDCORE' && !hardcoreSkillsTriggeredRef.current) {
+      hardcoreSkillsTriggeredRef.current = true;
+      setPendingSkillSelections(20);
+      triggerNextSkillDraw();
+      addNotification('하드코어 특별 보급: 스킬 20회 뽑기 가동!', '🎁', 'cyan');
+    }
+  };
+
+  const handleCloseBlueprintSelection = () => {
+    setIsBlueprintSelectionOpen(false);
+    if (gameMode === 'HARDCORE' && !hardcoreSkillsTriggeredRef.current) {
+      hardcoreSkillsTriggeredRef.current = true;
+      setPendingSkillSelections(20);
+      triggerNextSkillDraw();
+      addNotification('하드코어 특별 보급: 스킬 20회 뽑기 가동!', '🎁', 'cyan');
+    }
   };
 
   // Keyboard shortcut for Skills (E, Q, R)
@@ -644,27 +742,27 @@ export default function App() {
         return;
       }
 
-      const key = e.key.toLowerCase();
+      const key = e.key;
       const activeList = acquiredSkills.filter((s) => s.definition.type === 'ACTIVE');
-      if (key === 'e' && activeList[0] && activeList[0].currentCooldown <= 0) {
-        setActiveSkillTrigger(activeList[0].id);
+
+      let targetIndex = -1;
+      const num = parseInt(key, 10);
+      if (!isNaN(num) && num >= 1 && num <= activeList.length) {
+        targetIndex = num - 1;
+      } else if (key.toLowerCase() === 'e') {
+        targetIndex = 0;
+      } else if (key.toLowerCase() === 'q') {
+        targetIndex = 1;
+      } else if (key.toLowerCase() === 'r') {
+        targetIndex = 2;
+      }
+
+      if (targetIndex >= 0 && activeList[targetIndex] && activeList[targetIndex].currentCooldown <= 0) {
+        const targetSkill = activeList[targetIndex];
+        setActiveSkillTrigger(targetSkill.id);
         setAcquiredSkills((prev) =>
           prev.map((s) =>
-            s.id === activeList[0].id ? { ...s, currentCooldown: s.definition.cooldown || 5 } : s
-          )
-        );
-      } else if (key === 'q' && activeList[1] && activeList[1].currentCooldown <= 0) {
-        setActiveSkillTrigger(activeList[1].id);
-        setAcquiredSkills((prev) =>
-          prev.map((s) =>
-            s.id === activeList[1].id ? { ...s, currentCooldown: s.definition.cooldown || 5 } : s
-          )
-        );
-      } else if (key === 'r' && activeList[2] && activeList[2].currentCooldown <= 0) {
-        setActiveSkillTrigger(activeList[2].id);
-        setAcquiredSkills((prev) =>
-          prev.map((s) =>
-            s.id === activeList[2].id ? { ...s, currentCooldown: s.definition.cooldown || 5 } : s
+            s.id === targetSkill.id ? { ...s, currentCooldown: s.definition.cooldown || 5 } : s
           )
         );
       }
@@ -699,6 +797,17 @@ export default function App() {
         onOpenQuests={handleOpenQuests}
         onOpenStats={() => setIsStatsOpen(true)}
         onRestart={handleRestart}
+        onOpenBlueprints={() => {
+          if (coupons > 0) {
+            setIsBlueprintSelectionOpen(true);
+          } else {
+            setIsBlueprintInventoryOpen(true);
+          }
+        }}
+        blueprintCount={ownedBlueprints.length}
+        coupons={coupons}
+        gameMode={gameMode || 'STORY'}
+        synergyCount={activeSynergies.length}
       />
 
       {/* Main Canvas Arena & HUD Container */}
@@ -713,7 +822,7 @@ export default function App() {
                     {brawlElapsed >= 360 ? "☠️ 보스 총공격!" : "⚔️ 조무래기 난투"}
                   </span>
                   <span className="text-rose-400 font-mono bg-rose-950/60 border border-rose-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 text-[10px]">
-                    ❤️ {Math.ceil(hp)}/{Math.ceil(stats.maxHp)}
+                    ❤️ {Math.ceil(hp)}/{Math.ceil(effectiveStats.maxHp)}
                   </span>
                 </div>
                 <span className="text-slate-300 font-mono tracking-wider">
@@ -737,7 +846,7 @@ export default function App() {
         {/* Game Arena Canvas */}
         <GameCanvas
           currentWave={currentWave}
-          stats={stats}
+          stats={effectiveStats}
           acquiredSkills={acquiredSkills}
           activeStatusEffects={activeStatusEffects}
           onAddStatusEffect={(type, dur) => {
@@ -762,22 +871,37 @@ export default function App() {
             setAttackCdTotal(total);
           }}
           onTriggerNotification={addNotification}
-          isPaused={playerClass === null || isStatsOpen || isQuestsOpen || isCodexOpen || isSkillSelectOpen || isGameOverOpen || gameMode === null}
+          isPaused={
+            playerClass === null ||
+            isStatsOpen ||
+            isQuestsOpen ||
+            isCodexOpen ||
+            isSkillSelectOpen ||
+            isGameOverOpen ||
+            isBlueprintSelectionOpen ||
+            isBlueprintInventoryOpen ||
+            gameMode === null
+          }
           playerClass={playerClass || 'ASSASSIN'}
           killedBugCount={killedBugCount}
           gameMode={gameMode}
           onUpdateBrawlTime={setBrawlElapsed}
+          dashTrigger={dashTrigger}
+          onUpdateDashCooldown={(remaining, total) => {
+            setDashCdRemaining(remaining);
+            setDashCdTotal(total);
+          }}
         />
 
         {/* HUD Overlay */}
         <HUD
           hp={hp}
-          maxHp={stats.maxHp}
+          maxHp={effectiveStats.maxHp}
           level={level}
           xp={totalXp}
           nextLevelXp={totalXp + (50 - (totalXp % 50))}
           currentWave={currentWave}
-          stats={stats}
+          stats={effectiveStats}
           acquiredSkills={acquiredSkills}
           activeStatusEffects={activeStatusEffects}
           bossName={bossInfo.name}
@@ -801,10 +925,16 @@ export default function App() {
           playerClass={playerClass}
           attackCdRemaining={attackCdRemaining}
           attackCdTotal={attackCdTotal}
+          onDash={() => setDashTrigger((t) => t + 1)}
+          dashCdRemaining={dashCdRemaining}
+          dashCdTotal={dashCdTotal}
+          gameMode={gameMode || 'STORY'}
+          activeSynergies={activeSynergies}
+          onOpenBlueprints={() => setIsBlueprintInventoryOpen(true)}
         />
 
         {/* Wave Banner Announcement */}
-        {gameMode !== 'BRAWL' && <WaveBanner waveInfo={currentWaveConfig} visible={showWaveBanner} />}
+        {gameMode !== 'BRAWL' && gameMode !== 'HARDCORE' && <WaveBanner waveInfo={currentWaveConfig} visible={showWaveBanner} />}
 
         {/* Level Up & Resistance Random Stat Notifications */}
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-1.5 pointer-events-none select-none w-full max-w-xs sm:max-w-md px-4">
@@ -844,6 +974,7 @@ export default function App() {
         isOpen={isSkillSelectOpen}
         choices={skillChoices}
         onSelectSkill={handleSelectSkill}
+        remainingPicks={pendingSkillSelections}
       />
 
       <QuestModal
@@ -867,11 +998,37 @@ export default function App() {
         enemiesKilled={enemiesKilled}
         bossesKilled={bossesKilled}
         onRestart={handleRestart}
+        gameMode={gameMode}
+      />
+
+      <BlueprintSelectionModal
+        isOpen={isBlueprintSelectionOpen}
+        onClose={handleCloseBlueprintSelection}
+        coupons={coupons}
+        ownedBlueprints={ownedBlueprints}
+        onConfirm={handleConfirmBlueprints}
+      />
+
+      <BlueprintInventoryModal
+        isOpen={isBlueprintInventoryOpen}
+        onClose={() => setIsBlueprintInventoryOpen(false)}
+        ownedBlueprints={ownedBlueprints}
+        onOpenSelection={() => {
+          setIsBlueprintInventoryOpen(false);
+          setIsBlueprintSelectionOpen(true);
+        }}
+        coupons={coupons}
       />
 
       <HomeModeSelect
         isOpen={gameMode === null}
-        onSelect={(mode) => setGameMode(mode)}
+        onSelect={(mode) => {
+          setGameMode(mode);
+          if (mode === 'HARDCORE') {
+            setCoupons(3);
+            setOwnedBlueprints([]);
+          }
+        }}
       />
 
       <ClassSelectModal

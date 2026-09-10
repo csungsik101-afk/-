@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { PlayerStats, AcquiredSkill, ActiveStatusEffect, PlayerClassType, CLASS_BASE_STATS } from '../types/game';
-import { Heart, ShieldAlert, Zap, Bomb, Sword, Sparkles, ShieldCheck, HeartHandshake, Syringe, Flame, Skull, AlertOctagon, EyeOff, Ban, Lock, Smartphone } from 'lucide-react';
+import { PlayerStats, AcquiredSkill, ActiveStatusEffect, PlayerClassType, CLASS_BASE_STATS, BlueprintSynergy } from '../types/game';
+import { Heart, ShieldAlert, Zap, Bomb, Sword, Sparkles, ShieldCheck, HeartHandshake, Syringe, Flame, Skull, AlertOctagon, EyeOff, Ban, Lock, Smartphone, Wind, Shield } from 'lucide-react';
 import { VirtualJoystick } from './VirtualJoystick';
 import { MobileActionPad } from './MobileActionPad';
 
@@ -25,6 +25,12 @@ interface HUDProps {
   playerClass?: PlayerClassType | null;
   attackCdRemaining?: number;
   attackCdTotal?: number;
+  onDash?: () => void;
+  dashCdRemaining?: number;
+  dashCdTotal?: number;
+  gameMode?: string;
+  activeSynergies?: BlueprintSynergy[];
+  onOpenBlueprints?: () => void;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -34,6 +40,7 @@ export const HUD: React.FC<HUDProps> = ({
   xp,
   nextLevelXp,
   currentWave,
+  stats,
   acquiredSkills,
   activeStatusEffects,
   bossName,
@@ -47,6 +54,12 @@ export const HUD: React.FC<HUDProps> = ({
   playerClass,
   attackCdRemaining = 0,
   attackCdTotal = 0,
+  onDash,
+  dashCdRemaining = 0,
+  dashCdTotal = 2.5,
+  gameMode = 'STORY',
+  activeSynergies = [],
+  onOpenBlueprints,
 }) => {
   const [isMobileMode, setIsMobileMode] = useState<boolean>(() => {
     return typeof window !== 'undefined' && (window.innerWidth <= 1024 || 'ontouchstart' in window);
@@ -85,6 +98,12 @@ export const HUD: React.FC<HUDProps> = ({
                 <Heart className="w-4 h-4 fill-rose-500 text-rose-500" />
                 HP {Math.ceil(hp)}/{maxHp}
               </span>
+              {stats && stats.defense > 0 && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-indigo-950/90 text-indigo-300 border border-indigo-600 flex items-center gap-0.5 shadow-sm mr-1">
+                  <Shield className="w-2.5 h-2.5 text-indigo-400" />
+                  방어 {stats.defense}
+                </span>
+              )}
               <div className="flex items-center gap-1 flex-wrap">
                 {Array.from({ length: Math.min(15, heartSlots) }).map((_, idx) => {
                   const isFull = idx < fullHearts;
@@ -158,6 +177,27 @@ export const HUD: React.FC<HUDProps> = ({
                 })}
               </div>
             )}
+
+            {/* Active Synergies (내가 선택하여 완성한 조합) */}
+            {activeSynergies.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-800/50">
+                <span className="text-[10px] font-black text-emerald-400 mr-0.5 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-emerald-300 animate-spin" style={{ animationDuration: '6s' }} />
+                  선택 조합:
+                </span>
+                {activeSynergies.map((syn) => (
+                  <button
+                    key={syn.id}
+                    onClick={onOpenBlueprints}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-500/50 text-[10px] font-black text-emerald-200 shadow-sm transition-all cursor-pointer"
+                    title={`${syn.name} (${syn.effectDescription}) - 클릭하여 설계도 인벤토리 열기`}
+                  >
+                    <span>{syn.name}</span>
+                    <span className="text-amber-300 text-[9px] font-bold">({syn.effectDescription})</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Boss HP bar if active */}
@@ -191,7 +231,7 @@ export const HUD: React.FC<HUDProps> = ({
               let bg = 'bg-rose-950/90 border-rose-500 text-rose-300';
 
               if (effect.type === 'BLACKOUT') {
-                label = `👁️ 시야 암전 상태 (${effect.duration.toFixed(1)}초 남음)`;
+                label = `👁️ 플레이어 시야 암전 (${effect.duration.toFixed(1)}초 남음)`;
                 icon = EyeOff;
                 bg = 'bg-black/90 border-purple-500 text-purple-300 animate-bounce';
               } else if (effect.type === 'DISABLE_ATTACK') {
@@ -279,11 +319,43 @@ export const HUD: React.FC<HUDProps> = ({
               onSetAttackPressed={onSetAttackPressed}
               attackCdRemaining={attackCdRemaining}
               attackCdTotal={attackCdTotal}
+              onDash={onDash}
+              dashCdRemaining={dashCdRemaining}
+              dashCdTotal={dashCdTotal}
             />
           </div>
         ) : (
           /* 데스크톱 모드 액티브 스킬 바 */
           <div className="absolute bottom-4 right-4 flex items-center gap-2.5 bg-slate-900/90 backdrop-blur-md p-2.5 rounded-2xl border border-slate-700/80 shadow-2xl pointer-events-auto">
+            {/* Dash Button (Space / Shift) */}
+            {onDash && (
+              <button
+                disabled={dashCdRemaining > 0}
+                onClick={onDash}
+                className={`relative w-14 h-14 sm:w-16 sm:h-16 rounded-xl flex flex-col items-center justify-center gap-0.5 border-2 transition-all cursor-pointer overflow-hidden ${
+                  dashCdRemaining <= 0
+                    ? 'bg-slate-800/90 hover:bg-slate-700 border-cyan-400 shadow-lg shadow-cyan-500/20 active:scale-95'
+                    : 'bg-slate-950/80 border-slate-800 opacity-60 cursor-not-allowed'
+                }`}
+                title="대시 회피 기동 (Space / Shift)"
+              >
+                <span className="absolute top-1 right-1.5 text-[9px] font-mono font-black bg-slate-900/90 px-1 rounded text-cyan-300 border border-slate-700">
+                  [Space]
+                </span>
+                <Wind
+                  className={`w-6 h-6 sm:w-7 sm:h-7 text-cyan-400 ${dashCdRemaining <= 0 ? 'animate-pulse' : 'scale-90'}`}
+                />
+                <span className="text-[10px] font-bold text-white">대시</span>
+                {dashCdRemaining > 0 && (
+                  <div className="absolute inset-0 bg-black/75 flex items-center justify-center backdrop-blur-[1px]">
+                    <span className="text-xs font-black font-mono text-cyan-300">
+                      {dashCdRemaining.toFixed(1)}s
+                    </span>
+                  </div>
+                )}
+              </button>
+            )}
+
             <div className="flex flex-col items-center justify-center pr-2 border-r border-slate-800 text-center min-w-[75px]">
               {attackCdRemaining > 0 ? (
                 <>
@@ -312,7 +384,7 @@ export const HUD: React.FC<HUDProps> = ({
               activeSkills.map((skill, idx) => {
                 const Icon = getSkillIcon(skill.definition.icon);
                 const isReady = skill.currentCooldown <= 0;
-                const keyShortcut = idx === 0 ? 'E' : idx === 1 ? 'Q' : 'R';
+                const keyShortcut = `${idx + 1}`;
 
                 return (
                   <button
