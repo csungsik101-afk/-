@@ -28,7 +28,7 @@ interface GameCanvasProps {
   isAttackPressed?: boolean;
   activeSkillTrigger: string | null;
   onSkillTriggerHandled: () => void;
-  onUpdateBossStatus: (name?: string, hp?: number, maxHp?: number) => void;
+  onUpdateBossStatus: (name?: string, hp?: number, maxHp?: number, code?: string, phase?: number) => void;
   onUpdateAttackCooldown?: (remainingSec: number, totalSec: number) => void;
   onTriggerNotification?: (message: string, icon?: string, colorTheme?: string) => void;
   isPaused: boolean;
@@ -36,6 +36,8 @@ interface GameCanvasProps {
   killedBugCount: number;
   gameMode?: string | null;
   onUpdateBrawlTime?: (elapsed: number) => void;
+  onUpdateRankTime?: (elapsed: number) => void;
+  onRankCleared?: (clearTime: number) => void;
   dashTrigger?: number;
   onUpdateDashCooldown?: (remainingSec: number, totalSec: number) => void;
 }
@@ -44,7 +46,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   currentWave,
   stats,
   acquiredSkills,
-  activeStatusEffects,
+  activeStatusEffects = [],
   onAddStatusEffect,
   onRemoveStatusEffect,
   onEnemyKilled,
@@ -62,6 +64,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   killedBugCount,
   gameMode = null,
   onUpdateBrawlTime,
+  onUpdateRankTime,
+  onRankCleared,
   dashTrigger = 0,
   onUpdateDashCooldown,
 }) => {
@@ -92,6 +96,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     starlightExplosions: [] as { x: number; y: number; delay: number; maxDelay: number; triggered: boolean }[],
     bossPhase2ExplodeWarning: false,
     bossPhase2WarningTimer: 0,
+    // 랭크 모드 전용 필드들
+    rankTimer: 0,
+    rankCleared: false,
     // 난투 모드 전용 필드들
     brawlTimer: 0,
     brawlBossesSpawned: false,
@@ -120,6 +127,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     errorBossVanishZones: [] as { x: number; y: number; radius: number; warningTimer: number; activeTimer: number }[],
     errorBossAttackCooldown: 0,
     errorBossHitFlashTimer: 0,
+    screenShake: 0,
   });
 
   const lastCdEmitRef = useRef<number>(0);
@@ -136,6 +144,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     onUpdateAttackCooldown,
     onTriggerNotification,
     onUpdateBrawlTime,
+    onUpdateRankTime,
+    onRankCleared,
     onUpdateDashCooldown,
   });
   useEffect(() => {
@@ -149,9 +159,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       onUpdateAttackCooldown,
       onTriggerNotification,
       onUpdateBrawlTime,
+      onUpdateRankTime,
+      onRankCleared,
       onUpdateDashCooldown,
     };
-  }, [onAddStatusEffect, onRemoveStatusEffect, onEnemyKilled, onPlayerTakeDamage, onWaveClear, onUpdateBossStatus, onUpdateAttackCooldown, onTriggerNotification, onUpdateBrawlTime, onUpdateDashCooldown]);
+  }, [onAddStatusEffect, onRemoveStatusEffect, onEnemyKilled, onPlayerTakeDamage, onWaveClear, onUpdateBossStatus, onUpdateAttackCooldown, onTriggerNotification, onUpdateBrawlTime, onUpdateRankTime, onRankCleared, onUpdateDashCooldown]);
 
   // Keep track of fast-moving inputs in refs to avoid restarting the main loop on every joystick change
   const inputRef = useRef({ moveDirection, isAttackPressed });
@@ -168,6 +180,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     state.enemies = [];
     state.projectiles = [];
     state.voidZones = [];
+    state.waveSpawned = false;
+    state.waveTransitioning = true;
     state.bossSummonTimer = 0;
     state.bossPhase1Timer = 0;
     state.bossPhase2Timer = 0;
@@ -187,8 +201,43 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     state.brawlTriggered4Min = false;
     state.brawlTriggered5Min = false;
     state.passiveDaggerTimer = 0;
+    // Rank Mode specific resets
+    state.rankTimer = 0;
+    state.rankCleared = false;
 
-    if (gameMode === 'BRAWL') {
+    if (gameMode === 'RANK') {
+      const canvas = canvasRef.current;
+      const w = canvas ? canvas.width : 800;
+      const h = canvas ? canvas.height : 600;
+
+      sound.playWaveStart();
+      callbacksRef.current.onTriggerNotification?.('⭐ 랭크 모드 시작! 최종 보스 「별빛」을 신속히 격파하세요!', '⚡', 'amber');
+
+      // Spawn ONLY 3-11_STARLIGHT_BOSS
+      const starlightDef = ENEMY_DEFINITIONS['3-11_STARLIGHT_BOSS'];
+      if (starlightDef) {
+        state.enemies.push({
+          uid: `boss_starlight_rank_${Date.now()}`,
+          type: starlightDef.id,
+          code: starlightDef.code,
+          name: starlightDef.name,
+          category: starlightDef.category,
+          isBoss: true,
+          x: w / 2,
+          y: h * 0.28,
+          hp: starlightDef.hp,
+          maxHp: starlightDef.maxHp,
+          xp: starlightDef.xp,
+          speed: starlightDef.speed,
+          damage: starlightDef.damage,
+          radius: starlightDef.radius,
+          color: starlightDef.color,
+          abilityCooldown: 10,
+          abilityTimer: 0,
+          spawnTime: Date.now(),
+        });
+      }
+    } else if (gameMode === 'BRAWL') {
       sound.playWaveStart();
       callbacksRef.current.onTriggerNotification?.('⚔️ 난투 모드 돌입! 6분간 생존하며 성장하십시오!', '🔥', 'rose');
     } else if (gameMode === 'HARDCORE') {
@@ -305,6 +354,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
     }
+    state.waveSpawned = true;
     state.waveTransitioning = false;
   }, [currentWave, gameMode]);
 
@@ -919,6 +969,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const hasPepperSpray = acquiredSkills.some((s) => s.definition.code === '10-2_PEPPER_SPRAY');
             const hasGoAway = acquiredSkills.some((s) => s.definition.code === '10-7');
 
+            let hitCount = 0;
+            let hitBoss = false;
+
             // 부채꼴 범위 내 모든 적 타격
             state.enemies.forEach((en) => {
               const dist = Math.hypot(en.x - hero.x, en.y - hero.y) - en.radius;
@@ -927,6 +980,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const diffAngle = Math.abs((angleToEnemy - targetAngle + Math.PI * 3) % (Math.PI * 2) - Math.PI);
                 const angleTolerance = halfCone + Math.asin(Math.min(1, en.radius / Math.max(10, dist)));
                 if (diffAngle <= angleTolerance) {
+                  hitCount++;
+                  if (en.isBoss) hitBoss = true;
+
                   let totalDmg = stats.attack * 1.25; // 근접 부채꼴 타격 기본 보너스
                   if (hasVaccine && en.category === 'BUG') {
                     totalDmg *= 1 + killedBugCount * 0.015;
@@ -948,6 +1004,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   }
 
                   en.hp -= totalDmg;
+                  en.hitFlashTimer = 0.16; // 몬스터 피격 시 화이트-레드 섬광 점멸
                   if (en.code === 'ERROR') state.errorBossHitFlashTimer = 0.1;
 
                   // 넉백 파워 연산
@@ -959,6 +1016,44 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     en.x += Math.cos(pushAngle) * pushForce;
                     en.y += Math.sin(pushAngle) * pushForce;
                   }
+
+                  // 몬스터 피격 위치 개별 충격파 애니메이션
+                  state.effects.push({
+                    uid: `hit_sw_${Date.now()}_${Math.random()}`,
+                    x: en.x,
+                    y: en.y,
+                    type: 'HIT_SHOCKWAVE',
+                    radius: Math.max(32, en.radius * 1.8),
+                    color: '#EF4444',
+                    duration: 0.22,
+                    maxDuration: 0.22,
+                  });
+
+                  // 몬스터 피격 붉은색 섬광 및 타격 스파크 파편 효과
+                  state.effects.push({
+                    uid: `hit_flash_${Date.now()}_${Math.random()}`,
+                    x: en.x,
+                    y: en.y,
+                    type: 'RED_HIT_FLASH',
+                    radius: Math.max(26, en.radius + 12),
+                    color: '#FF2E54',
+                    duration: 0.18,
+                    maxDuration: 0.18,
+                    particles: Array.from({ length: 6 }).map(() => {
+                      const pAngle = targetAngle + (Math.random() - 0.5) * 1.4;
+                      const pSpeed = 100 + Math.random() * 240;
+                      return {
+                        x: en.x,
+                        y: en.y,
+                        vx: Math.cos(pAngle) * pSpeed,
+                        vy: Math.sin(pAngle) * pSpeed,
+                        life: 0.22 + Math.random() * 0.1,
+                        maxLife: 0.32,
+                        color: Math.random() > 0.35 ? '#EF4444' : '#FCA5A5',
+                        size: 2 + Math.random() * 2.5,
+                      };
+                    }),
+                  });
 
                   state.effects.push({
                     uid: `txt_${Date.now()}_${Math.random()}`,
@@ -972,6 +1067,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   });
                 }
               }
+            });
+
+            // 타격감 강화를 위한 카메라 스크린 셰이크(화면 진동)
+            if (hitCount > 0) {
+              state.screenShake = Math.min(12, (state.screenShake || 0) + (hitBoss ? 7 : 4));
+            }
+
+            // [공격 범위 내 붉은색 섬광 효과 (RED FLASH)]
+            state.effects.push({
+              uid: `atk_flash_${Date.now()}_${Math.random()}`,
+              x: hero.x,
+              y: hero.y,
+              type: 'ATTACK_RED_FLASH',
+              radius: slashRange,
+              angle: targetAngle,
+              arcAngle: coneAngleRad,
+              color: '#EF4444',
+              duration: hitCount > 0 ? 0.22 : 0.16,
+              maxDuration: hitCount > 0 ? 0.22 : 0.16,
+            });
+
+            // [공격 범위 내 충격파 애니메이션 (SHOCKWAVE)]
+            state.effects.push({
+              uid: `atk_sw_${Date.now()}_${Math.random()}`,
+              x: hero.x,
+              y: hero.y,
+              type: 'ATTACK_SHOCKWAVE',
+              radius: slashRange,
+              angle: targetAngle,
+              arcAngle: coneAngleRad,
+              color: '#DC2626',
+              duration: 0.24,
+              maxDuration: 0.24,
             });
 
             // 클래스 맞춤형 참격 시각 효과 (SLASH)
@@ -1048,7 +1176,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 }
 
                 en.hp -= finalDmg;
+                en.hitFlashTimer = 0.14;
                 if (en.code === 'ERROR') state.errorBossHitFlashTimer = 0.1;
+                state.screenShake = Math.min(8, (state.screenShake || 0) + (en.isBoss ? 3.5 : 1.8));
+
+                // 투사체 적중 붉은 충격파
+                state.effects.push({
+                  uid: `p_sw_${Date.now()}_${Math.random()}`,
+                  x: en.x,
+                  y: en.y,
+                  type: 'HIT_SHOCKWAVE',
+                  radius: Math.max(22, en.radius * 1.3),
+                  color: '#EF4444',
+                  duration: 0.16,
+                  maxDuration: 0.16,
+                });
 
                 // 넉백 파워 연산
                 let pushForce = 0;
@@ -1122,7 +1264,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             return true;
           });
 
-          // --- 4.8. BRAWL MODE SPAWNING ---
+          // --- 4.8. MODE TIME TRACKING & BRAWL SPAWNING ---
+          if (gameMode === 'RANK') {
+            if (!state.rankCleared && !state.waveTransitioning) {
+              state.rankTimer += dt;
+              callbacksRef.current.onUpdateRankTime?.(state.rankTimer);
+            }
+          }
+
           if (gameMode === 'BRAWL') {
             state.brawlTimer += dt;
             callbacksRef.current.onUpdateBrawlTime?.(state.brawlTimer);
@@ -1318,22 +1467,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           let currentBossName: string | undefined;
           let currentBossHp: number | undefined;
           let currentBossMaxHp: number | undefined;
+          let currentBossCode: string | undefined;
+          let currentBossPhase: number | undefined;
           const extraEnemiesToSpawn: EnemyEntity[] = [];
 
-          if (gameMode === 'BRAWL' && state.brawlBossesSpawned) {
-            const activeBosses = state.enemies.filter((e) => e.isBoss);
-            if (activeBosses.length > 0) {
-              currentBossName = `🚨 보스 대군단 (남은 보스: ${activeBosses.length}마리)`;
-              currentBossHp = activeBosses.reduce((acc, b) => acc + b.hp, 0);
-              currentBossMaxHp = activeBosses.reduce((acc, b) => acc + b.maxHp, 0);
-            }
-          }
-
           state.enemies = state.enemies.filter((en) => {
-            if (en.isBoss && !(gameMode === 'BRAWL' && state.brawlBossesSpawned)) {
+            // 별빛(3-11)과 ERROR 보스만 상단 보스바로 표시
+            if (en.code === '3-11' || en.code === 'ERROR') {
               currentBossName = en.name;
               currentBossHp = en.hp;
               currentBossMaxHp = en.maxHp;
+              currentBossCode = en.code;
+              if (en.code === '3-11') {
+                const ratio = en.hp / en.maxHp;
+                currentBossPhase = ratio > 0.66 ? 1 : ratio > 0.33 ? 2 : 3;
+              } else if (en.code === 'ERROR') {
+                currentBossPhase = state.errorBossPhase || 1;
+              }
             }
 
             // Clone expiration timer for 3-9 clones
@@ -1452,9 +1602,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             } else if (en.code === '3-11') {
               // 3-11 보스전: 별빛 체력 150 기준 페이즈 분기
               
-              // 15초에 한번 10마리의 조무래기(11-1) 소환 (모든 페이즈 지속적으로)
+              // 15초에 한번 10마리의 조무래기(11-1) 소환 (모든 페이즈 지속적으로, 랭크 모드는 보스 1:1전이므로 소환 안함)
               state.bossSummonTimer += dt;
-              if (state.bossSummonTimer >= 15) {
+              if (gameMode !== 'RANK' && state.bossSummonTimer >= 15) {
                 state.bossSummonTimer = 0;
                 const botDef = ENEMY_DEFINITIONS['11-1_BOT'];
                 if (botDef) {
@@ -1797,6 +1947,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Check if killed
             if (en.hp <= 0) {
               callbacksRef.current.onEnemyKilled(en);
+
+              // 보스 처치 즉시 완료 처리 (별빛 또는 하드코어 ERROR)
+              if (en.code === '3-11') {
+                state.starlightExplosions = [];
+                state.projectiles = [];
+                state.voidZones = [];
+                if (gameMode === 'RANK') {
+                  if (!state.rankCleared) {
+                    state.rankCleared = true;
+                    state.waveTransitioning = true;
+                    callbacksRef.current.onRankCleared?.(state.rankTimer);
+                    callbacksRef.current.onWaveClear();
+                  }
+                } else if (currentWave >= 6) {
+                  // 스토리 모드 6웨이브: 최종 보스 별빛 처치 시 잔여 소환 몹 일괄 소멸 및 즉시 최종 승리!
+                  state.enemies = [];
+                  state.waveTransitioning = true;
+                  callbacksRef.current.onWaveClear();
+                }
+              } else if (en.code === 'ERROR' && gameMode === 'HARDCORE') {
+                state.projectiles = [];
+                state.errorBossVanishZones = [];
+                state.waveTransitioning = true;
+                callbacksRef.current.onWaveClear();
+              }
+
               return false;
             }
             return true;
@@ -1855,7 +2031,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             return t.alpha > 0;
           });
 
-          callbacksRef.current.onUpdateBossStatus(currentBossName, currentBossHp, currentBossMaxHp);
+          callbacksRef.current.onUpdateBossStatus(
+            currentBossName,
+            currentBossHp,
+            currentBossMaxHp,
+            currentBossCode,
+            currentBossPhase
+          );
 
           // Check if Wave cleared! (All enemies dead or all Bosses and target Bugs cleared)
           if (gameMode === 'BRAWL') {
@@ -1865,7 +2047,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             }
           } else if (gameMode === 'HARDCORE') {
             const errorBoss = state.enemies.find((e) => e.code === 'ERROR');
-            if (!errorBoss && state.waveSpawned && !state.waveTransitioning) {
+            if (!errorBoss && !state.waveTransitioning) {
+              state.waveTransitioning = true;
+              callbacksRef.current.onWaveClear();
+            }
+          } else if (gameMode === 'RANK') {
+            const starlightBoss = state.enemies.find((e) => e.code === '3-11');
+            if (!starlightBoss && !state.waveTransitioning && !state.rankCleared) {
+              state.rankCleared = true;
+              state.waveTransitioning = true;
+              callbacksRef.current.onRankCleared?.(state.rankTimer);
+              callbacksRef.current.onWaveClear();
+            }
+          } else if (currentWave >= 6) {
+            // 스토리 모드 6웨이브 별빛 보스전 클리어 폴백
+            const starlightBoss = state.enemies.find((e) => e.code === '3-11');
+            if (!starlightBoss && !state.waveTransitioning) {
+              state.enemies = [];
+              state.projectiles = [];
+              state.voidZones = [];
+              state.starlightExplosions = [];
               state.waveTransitioning = true;
               callbacksRef.current.onWaveClear();
             }
@@ -1893,14 +2094,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (state.errorBossHitFlashTimer > 0) {
             state.errorBossHitFlashTimer = Math.max(0, state.errorBossHitFlashTimer - dt);
           }
+          if ((state.screenShake || 0) > 0) {
+            state.screenShake = Math.max(0, (state.screenShake || 0) - dt * 25);
+          }
+          state.enemies.forEach((en) => {
+            if ((en.hitFlashTimer || 0) > 0) {
+              en.hitFlashTimer = Math.max(0, (en.hitFlashTimer || 0) - dt);
+            }
+          });
 
           state.effects = state.effects.filter((ef) => {
             ef.duration -= dt;
+            if (ef.particles && ef.particles.length > 0) {
+              ef.particles.forEach((p) => {
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.life -= dt;
+              });
+              ef.particles = ef.particles.filter((p) => p.life > 0);
+            }
             return ef.duration > 0;
           });
 
           // --- 7. RENDERING ---
           ctx.clearRect(0, 0, w, h);
+
+          // 카메라 스크린 셰이크(타격감 연출)
+          const shakeMag = state.screenShake || 0;
+          const shakeX = shakeMag > 0 ? (Math.random() - 0.5) * shakeMag * 2 : 0;
+          const shakeY = shakeMag > 0 ? (Math.random() - 0.5) * shakeMag * 2 : 0;
+          ctx.save();
+          if (shakeMag > 0) {
+            ctx.translate(shakeX, shakeY);
+          }
 
           // Draw Arena Floor Tiles
           ctx.strokeStyle = '#1E293B';
@@ -2174,19 +2400,100 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.lineWidth = 2;
             ctx.stroke();
 
+            // Hit Flash silhouette (타격 피격 시 붉은색/백열 섬광 점멸)
+            if (en.hitFlashTimer && en.hitFlashTimer > 0) {
+              const flashAlpha = Math.min(1, en.hitFlashTimer / 0.16);
+              ctx.beginPath();
+              ctx.arc(0, 0, en.radius + 2, 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha * 0.85})`;
+              ctx.shadowColor = '#EF4444';
+              ctx.shadowBlur = 16;
+              ctx.fill();
+              ctx.strokeStyle = `rgba(239, 68, 68, ${flashAlpha})`;
+              ctx.lineWidth = 3;
+              ctx.stroke();
+            }
+
             // Label
             ctx.fillStyle = '#FFFFFF';
             ctx.font = 'bold 10px font-mono';
             ctx.textAlign = 'center';
             ctx.fillText(`[${en.code}]`, 0, 4);
 
-            // Health Bar
-            const barW = en.radius * 2;
-            const barH = 4;
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(-barW / 2, -en.radius - 10, barW, barH);
-            ctx.fillStyle = en.isBoss ? '#EF4444' : '#10B981';
-            ctx.fillRect(-barW / 2, -en.radius - 10, barW * Math.max(0, en.hp / en.maxHp), barH);
+            // Health Bar (Unified continuous bar with phase divider notches)
+            if (en.code === '3-11') {
+              // Starlight Boss: Unified connected bar with 2 dividing notch lines at 33.3% and 66.6%
+              const barW = Math.max(en.radius * 2.2, 54);
+              const barH = 5;
+              const startX = -barW / 2;
+              const barY = -en.radius - 12;
+              const hpRatio = Math.max(0, Math.min(1, en.hp / en.maxHp));
+
+              // Background
+              ctx.fillStyle = '#0F172A';
+              ctx.fillRect(startX, barY, barW, barH);
+
+              // Single continuous fill (depletes from right to left)
+              if (hpRatio > 0) {
+                ctx.fillStyle = '#F59E0B'; // radiant amber
+                ctx.fillRect(startX, barY, barW * hpRatio, barH);
+              }
+
+              // Outer border
+              ctx.strokeStyle = '#FBBF24';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(startX, barY, barW, barH);
+
+              // 2 Prominent vertical divider lines at 1/3 and 2/3
+              ctx.strokeStyle = '#020617';
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(startX + barW * (1 / 3), barY);
+              ctx.lineTo(startX + barW * (1 / 3), barY + barH);
+              ctx.moveTo(startX + barW * (2 / 3), barY);
+              ctx.lineTo(startX + barW * (2 / 3), barY + barH);
+              ctx.stroke();
+            } else if (en.code === 'ERROR') {
+              // ERROR Boss: Unified connected bar with 4 dividing notch lines
+              const barW = Math.max(en.radius * 2.4, 60);
+              const barH = 5;
+              const startX = -barW / 2;
+              const barY = -en.radius - 12;
+              const hpRatio = Math.max(0, Math.min(1, en.hp / en.maxHp));
+
+              // Background
+              ctx.fillStyle = '#000000';
+              ctx.fillRect(startX, barY, barW, barH);
+
+              // Single continuous fill (depletes from right to left)
+              if (hpRatio > 0) {
+                ctx.fillStyle = '#EF4444'; // glitch red
+                ctx.fillRect(startX, barY, barW * hpRatio, barH);
+              }
+
+              // Outer border
+              ctx.strokeStyle = '#06B6D4';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(startX, barY, barW, barH);
+
+              // 4 vertical divider notch lines at 20%, 40%, 60%, 80%
+              ctx.strokeStyle = '#000000';
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              [0.2, 0.4, 0.6, 0.8].forEach((r) => {
+                ctx.moveTo(startX + barW * r, barY);
+                ctx.lineTo(startX + barW * r, barY + barH);
+              });
+              ctx.stroke();
+            } else {
+              // Standard Enemy Health Bar
+              const barW = en.radius * 2;
+              const barH = 4;
+              ctx.fillStyle = '#334155';
+              ctx.fillRect(-barW / 2, -en.radius - 10, barW, barH);
+              ctx.fillStyle = en.isBoss ? '#EF4444' : '#10B981';
+              ctx.fillRect(-barW / 2, -en.radius - 10, barW * Math.max(0, en.hp / en.maxHp), barH);
+            }
 
             ctx.restore();
           });
@@ -2206,7 +2513,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.restore();
           });
 
-          // Draw Sugar Gnome Hero
+          // Draw Player Hero (용사)
           ctx.save();
           ctx.translate(hero.x, hero.y);
 
@@ -2295,29 +2602,99 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.stroke();
           }
 
-          // Gnome Body
+          // Draw Player Hero (용사)
+          const currentClassConfig = CLASS_BASE_STATS[playerClass] || CLASS_BASE_STATS.ASSASSIN;
+          const heroColor = currentClassConfig.color;
+          const heroSecColor = currentClassConfig.secondaryColor;
+
+          // Player Body
           ctx.beginPath();
           ctx.arc(0, 0, hero.radius, 0, Math.PI * 2);
-          ctx.fillStyle = isRevivalGhost ? 'rgba(244, 114, 182, 0.7)' : '#F59E0B';
-          ctx.shadowColor = '#F59E0B';
+          ctx.fillStyle = isRevivalGhost ? 'rgba(244, 114, 182, 0.7)' : heroColor;
+          ctx.shadowColor = heroColor;
           ctx.shadowBlur = 12;
           ctx.fill();
           ctx.strokeStyle = '#FFFFFF';
           ctx.lineWidth = 2.5;
           ctx.stroke();
 
-          // Gnome Pointy Red Hat
+          // Player Hero Armor & Headgear (Class-specific visual identity)
           ctx.rotate(hero.angle);
-          ctx.beginPath();
-          ctx.moveTo(-6, -8);
-          ctx.lineTo(18, 0);
-          ctx.lineTo(-6, 8);
-          ctx.closePath();
-          ctx.fillStyle = '#EF4444';
-          ctx.fill();
-          ctx.strokeStyle = '#FFFFFF';
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
+
+          if (playerClass === 'ASSASSIN') {
+            // 암살자: 날카로운 후드와 전방을 겨눈 쌍단검
+            ctx.beginPath();
+            ctx.moveTo(-4, -7);
+            ctx.lineTo(14, 0);
+            ctx.lineTo(-4, 7);
+            ctx.closePath();
+            ctx.fillStyle = '#4C0519'; // dark rose hood
+            ctx.fill();
+            ctx.strokeStyle = heroSecColor;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Twin Daggers
+            ctx.fillStyle = '#FDA4AF';
+            ctx.fillRect(8, -8, 12, 2.5);
+            ctx.fillRect(8, 5.5, 12, 2.5);
+          } else if (playerClass === 'TANKER') {
+            // 탱커: 중무장 투구와 전방 방패
+            ctx.beginPath();
+            ctx.arc(0, 0, 7, 0, Math.PI * 2);
+            ctx.fillStyle = '#312E81'; // dark indigo
+            ctx.fill();
+
+            // Heavy Front Shield Arc
+            ctx.beginPath();
+            ctx.arc(10, 0, 11, -Math.PI / 3, Math.PI / 3);
+            ctx.strokeStyle = '#C7D2FE';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+          } else if (playerClass === 'BERSERKER') {
+            // 버서커: 광폭한 뿔 투구와 전방 대검
+            ctx.beginPath();
+            ctx.moveTo(-5, -9);
+            ctx.lineTo(12, 0);
+            ctx.lineTo(-5, 9);
+            ctx.closePath();
+            ctx.fillStyle = '#7F1D1D'; // dark crimson
+            ctx.fill();
+            ctx.strokeStyle = '#FCA5A5';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Spikes/Horns
+            ctx.beginPath();
+            ctx.moveTo(0, -10);
+            ctx.lineTo(8, -13);
+            ctx.moveTo(0, 10);
+            ctx.lineTo(8, 13);
+            ctx.strokeStyle = '#F87171';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          } else {
+            // 마법사: 신비로운 마법사 고깔과 별빛 보석
+            ctx.beginPath();
+            ctx.moveTo(-7, -8);
+            ctx.lineTo(16, 0);
+            ctx.lineTo(-7, 8);
+            ctx.closePath();
+            ctx.fillStyle = '#064E3B'; // deep emerald
+            ctx.fill();
+            ctx.strokeStyle = '#6EE7B7';
+            ctx.lineWidth = 1.8;
+            ctx.stroke();
+
+            // Arcane Gem
+            ctx.beginPath();
+            ctx.arc(4, 0, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#A7F3D0';
+            ctx.shadowColor = '#34D399';
+            ctx.shadowBlur = 8;
+            ctx.fill();
+          }
+
           ctx.restore();
 
           // Draw Visual Effects
@@ -2353,55 +2730,173 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             } else if (ef.type === 'STAR_RAIN') {
               ctx.fillStyle = `rgba(234, 179, 8, ${alpha * 0.2})`;
               ctx.fillRect(0, 0, w, h);
+            } else if (ef.type === 'ATTACK_RED_FLASH' && ef.radius && ef.angle !== undefined) {
+              const halfArc = ef.arcAngle !== undefined ? ef.arcAngle / 2 : Math.PI / 3;
+              const progress = 1 - alpha;
+
+              // 1. 공격 범위 부채꼴 붉은색 강렬한 그라데이션 섬광
+              const grad = ctx.createRadialGradient(ef.x, ef.y, 5, ef.x, ef.y, ef.radius);
+              grad.addColorStop(0, `rgba(255, 255, 255, ${Math.min(1, alpha * 0.95)})`);
+              grad.addColorStop(0.25, `rgba(254, 202, 202, ${alpha * 0.85})`);
+              grad.addColorStop(0.55, `rgba(239, 68, 68, ${alpha * 0.65})`);
+              grad.addColorStop(0.85, `rgba(185, 28, 28, ${alpha * 0.35})`);
+              grad.addColorStop(1, 'rgba(153, 27, 27, 0)');
+
+              ctx.beginPath();
+              ctx.moveTo(ef.x, ef.y);
+              ctx.arc(ef.x, ef.y, ef.radius, ef.angle - halfArc, ef.angle + halfArc);
+              ctx.closePath();
+              ctx.fillStyle = grad;
+              ctx.fill();
+
+              // 2. 공격 범위 외곽 붉은색 섬광 링 라인
+              ctx.beginPath();
+              ctx.arc(ef.x, ef.y, ef.radius * (0.4 + 0.6 * progress), ef.angle - halfArc, ef.angle + halfArc);
+              ctx.strokeStyle = `rgba(254, 226, 226, ${alpha * 0.9})`;
+              ctx.lineWidth = 3.5 * alpha;
+              ctx.shadowColor = '#EF4444';
+              ctx.shadowBlur = 16;
+              ctx.stroke();
+
+              // 3. 부채꼴 방향으로 뻗어나가는 붉은색 레이저 섬광 광선들
+              const rayCount = 5;
+              ctx.shadowColor = '#DC2626';
+              ctx.shadowBlur = 12;
+              for (let r = 0; r < rayCount; r++) {
+                const rayAngle = ef.angle - halfArc + (ef.arcAngle || (Math.PI * 2 / 3)) * (r / (rayCount - 1));
+                const rayLen = ef.radius * (0.6 + 0.4 * (1 - (r % 2) * 0.3));
+                ctx.beginPath();
+                ctx.moveTo(ef.x, ef.y);
+                ctx.lineTo(ef.x + Math.cos(rayAngle) * rayLen, ef.y + Math.sin(rayAngle) * rayLen);
+                ctx.strokeStyle = r % 2 === 0 ? `rgba(255, 255, 255, ${alpha * 0.85})` : `rgba(239, 68, 68, ${alpha * 0.75})`;
+                ctx.lineWidth = 2 * alpha;
+                ctx.stroke();
+              }
+            } else if (ef.type === 'ATTACK_SHOCKWAVE' && ef.radius && ef.angle !== undefined) {
+              const halfArc = ef.arcAngle !== undefined ? ef.arcAngle / 2 : Math.PI / 3;
+              const progress = 1 - (ef.duration / ef.maxDuration);
+              const currentR = ef.radius * Math.sin((progress * Math.PI) / 2);
+
+              // 1. 공격 범위 궤적을 휩쓰는 전방 붉은색 충격파 호(Arc)
+              ctx.beginPath();
+              ctx.arc(ef.x, ef.y, currentR, ef.angle - halfArc * 1.05, ef.angle + halfArc * 1.05);
+              ctx.strokeStyle = `rgba(239, 68, 68, ${alpha * 0.8})`;
+              ctx.lineWidth = 7 * (1 - progress * 0.45);
+              ctx.shadowColor = '#EF4444';
+              ctx.shadowBlur = 18;
+              ctx.stroke();
+
+              // 2. 충격파 전면부 코어 하얀 백열광 라인
+              ctx.beginPath();
+              ctx.arc(ef.x, ef.y, currentR, ef.angle - halfArc * 0.98, ef.angle + halfArc * 0.98);
+              ctx.strokeStyle = `rgba(255, 241, 242, ${alpha * 0.95})`;
+              ctx.lineWidth = 3 * alpha;
+              ctx.stroke();
+
+              // 3. 뒤따라 퍼지는 2차 잔여 충격파 리플 파동
+              if (currentR > 20) {
+                ctx.beginPath();
+                ctx.arc(ef.x, ef.y, Math.max(5, currentR - 15), ef.angle - halfArc * 0.88, ef.angle + halfArc * 0.88);
+                ctx.strokeStyle = `rgba(248, 113, 113, ${alpha * 0.45})`;
+                ctx.lineWidth = 2 * alpha;
+                ctx.stroke();
+              }
+            } else if (ef.type === 'HIT_SHOCKWAVE' && ef.radius) {
+              const progress = 1 - (ef.duration / ef.maxDuration);
+              const ringR = ef.radius * (0.25 + 0.85 * progress);
+
+              // 몬스터 피격 중심 동심원 충격파 링
+              ctx.beginPath();
+              ctx.arc(ef.x, ef.y, ringR, 0, Math.PI * 2);
+              ctx.strokeStyle = `rgba(239, 68, 68, ${alpha * 0.85})`;
+              ctx.lineWidth = Math.max(1.5, 4.5 * (1 - progress));
+              ctx.shadowColor = '#EF4444';
+              ctx.shadowBlur = 14;
+              ctx.stroke();
+
+              // 안쪽 백열 충격 링
+              ctx.beginPath();
+              ctx.arc(ef.x, ef.y, ringR * 0.72, 0, Math.PI * 2);
+              ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.9})`;
+              ctx.lineWidth = Math.max(1, 2 * alpha);
+              ctx.stroke();
+            } else if (ef.type === 'RED_HIT_FLASH') {
+              const flashRadius = ef.radius || 25;
+
+              // 1. 십자형 섬광 (Cross-Slash Spark)
+              ctx.save();
+              ctx.translate(ef.x, ef.y);
+              ctx.strokeStyle = `rgba(255, 241, 242, ${alpha * 0.95})`;
+              ctx.lineWidth = 3.5 * alpha;
+              ctx.shadowColor = '#FF0033';
+              ctx.shadowBlur = 16;
+              ctx.beginPath();
+              ctx.moveTo(-flashRadius, -flashRadius * 0.35);
+              ctx.lineTo(flashRadius, flashRadius * 0.35);
+              ctx.moveTo(-flashRadius * 0.35, flashRadius);
+              ctx.lineTo(flashRadius * 0.35, -flashRadius);
+              ctx.stroke();
+
+              // 2. 중앙 강렬한 붉은 핵(Core)
+              ctx.beginPath();
+              ctx.arc(0, 0, Math.max(2, 6 * alpha), 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+              ctx.shadowColor = '#DC2626';
+              ctx.shadowBlur = 18;
+              ctx.fill();
+              ctx.restore();
+
+              // 3. 튀어나가는 붉은색 타격 파편/스파크 (Particles)
+              if (ef.particles && ef.particles.length > 0) {
+                ef.particles.forEach((p) => {
+                  const pAlpha = Math.max(0, p.life / p.maxLife);
+                  ctx.beginPath();
+                  ctx.arc(p.x, p.y, p.size * pAlpha, 0, Math.PI * 2);
+                  ctx.fillStyle = p.color;
+                  ctx.shadowColor = '#EF4444';
+                  ctx.shadowBlur = 6;
+                  ctx.fill();
+
+                  // 속도 궤적 라인
+                  ctx.beginPath();
+                  ctx.moveTo(p.x, p.y);
+                  ctx.lineTo(p.x - p.vx * 0.03, p.y - p.vy * 0.03);
+                  ctx.strokeStyle = `rgba(254, 202, 202, ${pAlpha * 0.8})`;
+                  ctx.lineWidth = 1.5;
+                  ctx.stroke();
+                });
+              }
             }
             ctx.restore();
           });
 
-          // Draw Screen Blackout Overlay (Rule 3-1, 3-10)
+          // 월드 렌더링 카메라 셰이크 매트릭스 복원 (오버레이 및 암전 전)
+          ctx.restore();
+
+          // Draw Screen Blackout Overlay - 100% Total Complete Blackout (완전 암전: 아예 안 보이게)
           const isBlackout = activeStatusEffects.some((e) => e.type === 'BLACKOUT');
           if (isBlackout) {
             ctx.save();
-            const playerVisionRadius = 140; // Player's visible sight radius during blackout
+            // 화면 전체를 100% 칠흑 같은 암흑으로 완전히 덮음 (시야 없음)
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, w, h);
 
-            // 1. Darken everything except the circular field of vision around the player
-            ctx.beginPath();
-            ctx.rect(0, 0, w, h);
-            ctx.arc(hero.x, hero.y, playerVisionRadius, 0, Math.PI * 2, true);
-            ctx.fillStyle = 'rgba(2, 6, 23, 0.95)';
-            ctx.fill();
+            // 중앙에 긴장감 넘치는 완전 암전 경고 표시
+            const blackoutEffect = activeStatusEffects.find((e) => e.type === 'BLACKOUT');
+            const remaining = blackoutEffect ? blackoutEffect.duration.toFixed(1) : '0.0';
 
-            // 2. Smooth gradient vignette on the edge of the player's vision
-            const visionGrad = ctx.createRadialGradient(
-              hero.x, hero.y, playerVisionRadius * 0.45,
-              hero.x, hero.y, playerVisionRadius
-            );
-            visionGrad.addColorStop(0, 'rgba(2, 6, 23, 0)');
-            visionGrad.addColorStop(0.7, 'rgba(2, 6, 23, 0.35)');
-            visionGrad.addColorStop(1, 'rgba(2, 6, 23, 0.95)');
-
-            ctx.beginPath();
-            ctx.arc(hero.x, hero.y, playerVisionRadius, 0, Math.PI * 2);
-            ctx.fillStyle = visionGrad;
-            ctx.fill();
-
-            // 3. Subtle purple radar outline around the player's visible area
-            ctx.beginPath();
-            ctx.arc(hero.x, hero.y, playerVisionRadius, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(168, 85, 247, 0.6)';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([6, 6]);
-            ctx.stroke();
-
-            // 4. Player vision alert notice at top
-            ctx.fillStyle = '#E9D5FF';
-            ctx.font = 'bold 16px sans-serif';
+            ctx.fillStyle = '#EF4444';
+            ctx.font = 'bold 22px sans-serif';
             ctx.textAlign = 'center';
-            ctx.shadowColor = '#000000';
-            ctx.shadowBlur = 6;
-            ctx.fillText('👁️ 암전 상태! 플레이어 주변 시야만 확보됩니다!', w / 2, 44);
-            ctx.font = '12px sans-serif';
-            ctx.fillStyle = '#CBD5E1';
-            ctx.fillText('시야 밖에서 접근하는 적들을 경계하며 생존하세요!', w / 2, 66);
+            ctx.shadowColor = '#DC2626';
+            ctx.shadowBlur = 12;
+            ctx.fillText(`👁️ 완전 암전 (${remaining}초)`, w / 2, h / 2 - 10);
+
+            ctx.font = '13px sans-serif';
+            ctx.fillStyle = '#94A3B8';
+            ctx.shadowBlur = 0;
+            ctx.fillText('시야가 완전히 차단되었습니다!', w / 2, h / 2 + 18);
+
             ctx.restore();
           }
         }

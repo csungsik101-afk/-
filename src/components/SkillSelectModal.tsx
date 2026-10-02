@@ -11,11 +11,11 @@ interface SkillSelectModalProps {
 
 export const SkillSelectModal: React.FC<SkillSelectModalProps> = ({
   isOpen,
-  choices,
+  choices = [],
   onSelectSkill,
   remainingPicks = 1,
 }) => {
-  if (!isOpen || choices.length === 0) return null;
+  if (!isOpen || !choices || choices.length === 0) return null;
 
   const getIconComponent = (iconName: string) => {
     switch (iconName) {

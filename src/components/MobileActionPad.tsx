@@ -15,7 +15,7 @@ interface MobileActionPadProps {
 }
 
 export const MobileActionPad: React.FC<MobileActionPadProps> = ({
-  acquiredSkills,
+  acquiredSkills = [],
   onUseSkill,
   isAttackPressed,
   onSetAttackPressed,
@@ -37,7 +37,7 @@ export const MobileActionPad: React.FC<MobileActionPadProps> = ({
     }
   };
 
-  const activeSkills = acquiredSkills.filter((s) => s.definition.type === 'ACTIVE');
+  const activeSkills = (acquiredSkills || []).filter((s) => s?.definition?.type === 'ACTIVE');
 
   return (
     <div className="flex items-end gap-3 pointer-events-auto select-none touch-none">

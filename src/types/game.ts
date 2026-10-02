@@ -97,6 +97,7 @@ export interface EnemyEntity {
   spawnTime: number;
   cloneExpireTimer?: number;
   lastSawbladeHitTime?: number;
+  hitFlashTimer?: number;
 }
 
 export interface Projectile {
@@ -117,7 +118,17 @@ export interface VisualEffect {
   uid: string;
   x: number;
   y: number;
-  type: 'EXPLOSION' | 'SLASH' | 'TEXT' | 'STAR_RAIN' | 'VOID_ZONE' | 'REVIVE_RING';
+  type:
+    | 'EXPLOSION'
+    | 'SLASH'
+    | 'TEXT'
+    | 'STAR_RAIN'
+    | 'VOID_ZONE'
+    | 'REVIVE_RING'
+    | 'ATTACK_RED_FLASH'
+    | 'ATTACK_SHOCKWAVE'
+    | 'HIT_SHOCKWAVE'
+    | 'RED_HIT_FLASH';
   radius?: number;
   angle?: number;
   arcAngle?: number; // radians for custom fan/cone slash angle
@@ -126,6 +137,7 @@ export interface VisualEffect {
   duration: number; // seconds
   maxDuration: number;
   damage?: number;
+  particles?: { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: string; size: number }[];
 }
 
 export interface VoidZone {
@@ -160,7 +172,16 @@ export interface WaveInfo {
 }
 
 export type PlayerClassType = 'ASSASSIN' | 'TANKER' | 'BERSERKER' | 'MAGE';
-export type GameModeType = 'STORY' | 'BRAWL' | 'HARDCORE';
+export type GameModeType = 'STORY' | 'BRAWL' | 'HARDCORE' | 'RANK';
+
+export interface RankingRecord {
+  id?: string;
+  playerId: string;
+  nickname: string;
+  clearTime: number; // in seconds (e.g. 12.35)
+  playerClass: PlayerClassType | string;
+  updatedAt: string;
+}
 
 export type BlueprintType = 'WEAPON' | 'SUB_TOOL' | 'SUB_ARMOR';
 

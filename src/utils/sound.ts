@@ -145,6 +145,10 @@ class SoundManager {
     } catch {}
   }
 
+  playBossWarning() {
+    this.playWarning();
+  }
+
   playWaveStart() {
     if (!this.enabled) return;
     this.initCtx();
@@ -161,6 +165,120 @@ class SoundManager {
       gain.connect(this.ctx.destination);
       osc.start();
       osc.stop(this.ctx.currentTime + 0.45);
+    } catch {}
+  }
+
+  // --- Background Music & Pitch Modulation ---
+  private bgmInterval: ReturnType<typeof setInterval> | null = null;
+  private bgmPitchMultiplier: number = 1.0;
+  private currentBossType: 'STARLIGHT' | 'ERROR' | null = null;
+  private bgmStep: number = 0;
+
+  startBgm() {
+    if (this.bgmInterval !== null || !this.enabled) return;
+    this.initCtx();
+
+    // Minor pentatonic / sci-fi arpeggio sequence
+    const baseScale = [220, 261.63, 293.66, 329.63, 392.0, 440, 523.25, 392.0];
+
+    this.bgmInterval = setInterval(() => {
+      if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
+      try {
+        const note = baseScale[this.bgmStep % baseScale.length];
+        this.bgmStep++;
+
+        let pitch = note * this.bgmPitchMultiplier;
+        let waveType: OscillatorType = 'sine';
+        let noteVol = 0.035;
+
+        if (this.currentBossType === 'STARLIGHT') {
+          // Celestial high mystical pitch & bell harmonics
+          pitch = note * 1.35;
+          waveType = this.bgmStep % 2 === 0 ? 'sine' : 'triangle';
+          noteVol = 0.045;
+        } else if (this.currentBossType === 'ERROR') {
+          // Heavy detuned corrupted low glitch pitch with slight frequency jitter
+          const jitter = (Math.random() - 0.5) * 15;
+          pitch = note * 0.72 + jitter;
+          waveType = this.bgmStep % 3 === 0 ? 'sawtooth' : 'square';
+          noteVol = 0.03;
+        }
+
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = waveType;
+        osc.frequency.setValueAtTime(pitch, this.ctx.currentTime);
+
+        gain.gain.setValueAtTime(noteVol, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.18);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(this.ctx.currentTime);
+        osc.stop(this.ctx.currentTime + 0.18);
+      } catch {}
+    }, 200);
+  }
+
+  stopBgm() {
+    if (this.bgmInterval !== null) {
+      clearInterval(this.bgmInterval);
+      this.bgmInterval = null;
+    }
+  }
+
+  setBossTheme(type: 'STARLIGHT' | 'ERROR' | null) {
+    this.currentBossType = type;
+    if (type === 'STARLIGHT') {
+      this.bgmPitchMultiplier = 1.35;
+    } else if (type === 'ERROR') {
+      this.bgmPitchMultiplier = 0.72;
+    } else {
+      this.bgmPitchMultiplier = 1.0;
+    }
+
+    // Auto-start BGM if not yet running
+    if (this.enabled && this.bgmInterval === null) {
+      this.startBgm();
+    }
+  }
+
+  playPhaseShift(type: 'STARLIGHT' | 'ERROR') {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+    try {
+      if (type === 'STARLIGHT') {
+        // Astral ascending harmonic chimes
+        const chimeFreqs = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+        chimeFreqs.forEach((freq, idx) => {
+          const osc = this.ctx!.createOscillator();
+          const gain = this.ctx!.createGain();
+          osc.type = 'sine';
+          const t = this.ctx!.currentTime + idx * 0.07;
+          osc.frequency.setValueAtTime(freq, t);
+          gain.gain.setValueAtTime(0.25, t);
+          gain.gain.exponentialRampToValueAtTime(0.01, t + 0.35);
+          osc.connect(gain);
+          gain.connect(this.ctx!.destination);
+          osc.start(t);
+          osc.stop(t + 0.35);
+        });
+      } else {
+        // Glitch digital shockwave buzz
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(110, this.ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(350, this.ctx.currentTime + 0.15);
+        osc.frequency.linearRampToValueAtTime(80, this.ctx.currentTime + 0.35);
+        gain.gain.setValueAtTime(0.35, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.35);
+      }
     } catch {}
   }
 }

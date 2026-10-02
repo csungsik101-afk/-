@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /rankings/{playerId} {
+      allow read: if true;
+      allow write: if request.resource.data.clearTime is number 
+                   && request.resource.data.clearTime > 0
+                   && request.resource.data.nickname is string
+                   && request.resource.data.nickname.size() > 0
+                   && request.resource.data.nickname.size() <= 24;
+    }
+  }
+}

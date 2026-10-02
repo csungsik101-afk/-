@@ -1,0 +1,18 @@
+{
+  "entities": {
+    "Rankings": {
+      "collection": "rankings",
+      "fields": {
+        "playerId": { "type": "string", "description": "Unique player ID generated on client or device" },
+        "nickname": { "type": "string", "description": "Player nickname (1-20 characters)" },
+        "clearTime": { "type": "number", "description": "Starlight boss clear time in seconds, lower is faster" },
+        "playerClass": { "type": "string", "description": "Player class name" },
+        "updatedAt": { "type": "string", "description": "Timestamp of record update" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.resource.data.clearTime is number && request.resource.data.clearTime > 0 && request.resource.data.nickname is string"
+      }
+    }
+  }
+}

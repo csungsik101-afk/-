@@ -60,7 +60,7 @@ export const BlueprintInventoryModal: React.FC<BlueprintInventoryModalProps> = (
                   설계도 인벤토리
                 </h2>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase bg-slate-800 text-amber-300 border border-slate-700">
-                  총 {inventoryIds.length}개 보관 중
+                  총 {currentIds.length}개 보관 중
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -146,7 +146,7 @@ export const BlueprintInventoryModal: React.FC<BlueprintInventoryModalProps> = (
                 <button
                   onClick={() => {
                     onClose();
-                    onOpenCouponShop();
+                    handleOpenShop();
                   }}
                   className="text-xs text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
                 >

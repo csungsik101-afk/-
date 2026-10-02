@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { PlayerStats, AcquiredSkill, ActiveStatusEffect, PlayerClassType, CLASS_BASE_STATS, BlueprintSynergy } from '../types/game';
-import { Heart, ShieldAlert, Zap, Bomb, Sword, Sparkles, ShieldCheck, HeartHandshake, Syringe, Flame, Skull, AlertOctagon, EyeOff, Ban, Lock, Smartphone, Wind, Shield } from 'lucide-react';
+import { Heart, ShieldAlert, Zap, Bomb, Sword, Sparkles, ShieldCheck, HeartHandshake, Syringe, Flame, Skull, AlertOctagon, EyeOff, Ban, Lock, Smartphone, Wind, Shield, Bug, AlertTriangle } from 'lucide-react';
 import { VirtualJoystick } from './VirtualJoystick';
 import { MobileActionPad } from './MobileActionPad';
+import { BossHealthBar } from './BossHealthBar';
+import { sound } from '../utils/sound';
 
 interface HUDProps {
   hp: number;
@@ -17,6 +20,8 @@ interface HUDProps {
   bossName?: string;
   bossHp?: number;
   bossMaxHp?: number;
+  bossCode?: string;
+  bossPhase?: number;
   onUseSkill: (skillId: string) => void;
   moveDirection: { x: number; y: number };
   onSetMoveDirection: (dir: { x: number; y: number }) => void;
@@ -41,11 +46,13 @@ export const HUD: React.FC<HUDProps> = ({
   nextLevelXp,
   currentWave,
   stats,
-  acquiredSkills,
-  activeStatusEffects,
+  acquiredSkills = [],
+  activeStatusEffects = [],
   bossName,
   bossHp,
   bossMaxHp,
+  bossCode,
+  bossPhase,
   onUseSkill,
   moveDirection,
   onSetMoveDirection,
@@ -77,18 +84,107 @@ export const HUD: React.FC<HUDProps> = ({
     }
   };
 
-  const activeSkills = acquiredSkills.filter((s) => s.definition.type === 'ACTIVE');
-  const passiveSkills = acquiredSkills.filter((s) => s.definition.type === 'PASSIVE');
+  const activeSkills = (acquiredSkills || []).filter((s) => s?.definition?.type === 'ACTIVE');
+  const passiveSkills = (acquiredSkills || []).filter((s) => s?.definition?.type === 'PASSIVE');
 
   // Render health hearts
   const heartSlots = Math.ceil(maxHp);
   const fullHearts = Math.floor(hp);
   const hasHalfHeart = hp % 1 >= 0.5;
 
+  // Center screen phase transition announcement
+  const prevBossPhaseRef = useRef<number | undefined>(bossPhase);
+  const [centerPhaseAlert, setCenterPhaseAlert] = useState<{
+    phaseNum: number;
+    title: string;
+    subtitle: string;
+    theme: 'STARLIGHT' | 'ERROR';
+  } | null>(null);
+
+  useEffect(() => {
+    if (bossName && bossHp !== undefined && bossHp > 0 && bossPhase !== undefined) {
+      if (prevBossPhaseRef.current !== undefined && bossPhase !== prevBossPhaseRef.current) {
+        const isStarlight = bossCode === '3-11' || bossName.includes('별빛');
+        const isError = bossCode === 'ERROR' || bossName.toUpperCase().includes('ERROR');
+
+        if (isStarlight || isError) {
+          const theme = isStarlight ? 'STARLIGHT' : 'ERROR';
+          const title = isStarlight
+            ? `✦ 별빛 제 ${bossPhase}단계 돌입! ✦`
+            : `⚠️ [SYSTEM ERROR] PHASE ${bossPhase} 돌입! ⚠️`;
+          const subtitle = isStarlight
+            ? (bossPhase === 2 ? '초신성 항성 붕괴 폭발 주의!' : '회전 톱날 방어벽 활성화!')
+            : (bossPhase === 2 ? '필드 5개 구역 소멸 침식 주의!' : bossPhase === 3 ? '투명 은신 & 데미지 증폭!' : bossPhase === 4 ? '왜곡 장갑 90% 피해 차단!' : '은신 6칸 순간이동 3연속 급습!');
+
+          setCenterPhaseAlert({ phaseNum: bossPhase, title, subtitle, theme });
+          sound.playPhaseShift(theme);
+
+          const timer = setTimeout(() => {
+            setCenterPhaseAlert(null);
+          }, 2400); // 2.4s screen center announcement
+          prevBossPhaseRef.current = bossPhase;
+          return () => clearTimeout(timer);
+        }
+      }
+      prevBossPhaseRef.current = bossPhase;
+    }
+  }, [bossPhase, bossName, bossHp, bossCode]);
+
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-3 sm:p-4 z-20 overflow-hidden">
-      {/* TOP ROW: HP, XP, BOSS HP */}
-      <div className="flex flex-col gap-2">
+      {/* Central Screen Phase Transition Announcement Banner */}
+      <AnimatePresence>
+        {centerPhaseAlert && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.65, y: 35 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 1.15, y: -30 }}
+            transition={{ type: 'spring', stiffness: 450, damping: 22 }}
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none select-none px-6 py-4 rounded-2xl backdrop-blur-xl border-2 shadow-2xl flex flex-col items-center gap-1.5 min-w-[300px] sm:min-w-[420px]"
+            style={{
+              backgroundColor: centerPhaseAlert.theme === 'STARLIGHT' ? 'rgba(15, 23, 42, 0.95)' : 'rgba(0, 0, 0, 0.95)',
+              borderColor: centerPhaseAlert.theme === 'STARLIGHT' ? '#FBBF24' : '#EF4444',
+              boxShadow: centerPhaseAlert.theme === 'STARLIGHT' ? '0 0 50px rgba(251, 191, 36, 0.65)' : '0 0 50px rgba(239, 68, 68, 0.75), 0 0 25px rgba(6, 182, 212, 0.5)',
+            }}
+          >
+            <div className="flex items-center gap-2">
+              {centerPhaseAlert.theme === 'STARLIGHT' ? (
+                <Sparkles className="w-6 h-6 text-amber-300 animate-spin" style={{ animationDuration: '4s' }} />
+              ) : (
+                <Bug className="w-6 h-6 text-red-500 animate-bounce" />
+              )}
+              <h2 className={`text-base sm:text-xl font-black ${centerPhaseAlert.theme === 'STARLIGHT' ? 'bg-gradient-to-r from-amber-200 via-yellow-300 to-rose-300 bg-clip-text text-transparent' : 'font-mono text-red-400 drop-shadow-[2px_0_0_rgba(6,182,212,0.8)]'}`}>
+                {centerPhaseAlert.title}
+              </h2>
+              {centerPhaseAlert.theme === 'STARLIGHT' ? (
+                <Sparkles className="w-6 h-6 text-amber-300 animate-spin" style={{ animationDuration: '4s' }} />
+              ) : (
+                <AlertTriangle className="w-6 h-6 text-yellow-400 animate-pulse" />
+              )}
+            </div>
+            <p className={`text-xs sm:text-sm font-bold ${centerPhaseAlert.theme === 'STARLIGHT' ? 'text-amber-200' : 'font-mono text-cyan-300'}`}>
+              {centerPhaseAlert.subtitle}
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* TOP SECTION: BOSS BAR & PLAYER INFO */}
+      <div className="flex flex-col gap-2 w-full">
+        {/* Prominent Themed Boss Bar at Screen Top (별빛 및 ERROR 보스 전용) */}
+        {bossName && bossHp !== undefined && bossMaxHp !== undefined && bossHp > 0 &&
+          (bossCode === '3-11' || bossCode === 'ERROR' || bossName.includes('별빛') || bossName.toUpperCase().includes('ERROR')) && (
+          <div className="w-full flex justify-center pointer-events-auto mb-1">
+            <BossHealthBar
+              bossName={bossName}
+              bossHp={bossHp}
+              bossMaxHp={bossMaxHp}
+              bossCode={bossCode}
+              bossPhase={bossPhase}
+            />
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Player HP & Level Bar */}
           <div className="bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl p-2.5 shadow-xl pointer-events-auto flex flex-col gap-2 min-w-[240px]">
@@ -199,27 +295,6 @@ export const HUD: React.FC<HUDProps> = ({
               </div>
             )}
           </div>
-
-          {/* Boss HP bar if active */}
-          {bossName && bossHp !== undefined && bossMaxHp !== undefined && bossHp > 0 && (
-            <div className="bg-slate-900/95 backdrop-blur-md border-2 border-rose-600/80 rounded-xl p-3 shadow-2xl pointer-events-auto flex-1 max-w-md animate-pulse">
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <div className="flex items-center gap-1.5">
-                  <Skull className="w-5 h-5 text-rose-500 animate-bounce" />
-                  <span className="font-black text-xs sm:text-sm text-white truncate">{bossName}</span>
-                </div>
-                <span className="font-mono font-bold text-xs text-rose-400 shrink-0">
-                  {Math.ceil(bossHp)} / {bossMaxHp} HP
-                </span>
-              </div>
-              <div className="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-rose-950">
-                <div
-                  className="h-full bg-gradient-to-r from-red-600 via-rose-500 to-amber-500 transition-all duration-300 shadow-inner"
-                  style={{ width: `${Math.max(0, (bossHp / bossMaxHp) * 100)}%` }}
-                />
-              </div>
-            </div>
-          )}
         </div>
 
         {/* STATUS EFFECTS WARNING ROW */}
@@ -231,9 +306,9 @@ export const HUD: React.FC<HUDProps> = ({
               let bg = 'bg-rose-950/90 border-rose-500 text-rose-300';
 
               if (effect.type === 'BLACKOUT') {
-                label = `👁️ 플레이어 시야 암전 (${effect.duration.toFixed(1)}초 남음)`;
+                label = `👁️ 완전 암전 (${effect.duration.toFixed(1)}초 남음)`;
                 icon = EyeOff;
-                bg = 'bg-black/90 border-purple-500 text-purple-300 animate-bounce';
+                bg = 'bg-black/95 border-red-600 text-red-300 animate-pulse';
               } else if (effect.type === 'DISABLE_ATTACK') {
                 label = `⚔️ 공격 불가능 마비 (${effect.duration.toFixed(1)}초 남음)`;
                 icon = Ban;

@@ -13,10 +13,12 @@ import { ClassSelectModal } from './components/ClassSelectModal';
 import { HomeModeSelect } from './components/HomeModeSelect';
 import { BlueprintSelectionModal } from './components/BlueprintSelectionModal';
 import { BlueprintInventoryModal } from './components/BlueprintInventoryModal';
+import { RankingModal } from './components/RankingModal';
 import { checkSatisfiedSynergies, calculateBlueprintStats } from './data/blueprints';
 import { PlayerStats, AcquiredSkill, ActiveStatusEffect, QuestState, SkillDefinition, EnemyEntity, PlayerClassType, CLASS_BASE_STATS, GameModeType } from './types/game';
 import { SKILL_DEFINITIONS, WAVE_CONFIGS } from './data/encyclopedia';
 import { sound } from './utils/sound';
+import { Sparkles, Bug, AlertTriangle } from 'lucide-react';
 
 export default function App() {
   // --- CORE GAME STATE ---
@@ -58,7 +60,13 @@ export default function App() {
   const [killedBugCount, setKilledBugCount] = useState<number>(0);
 
   // Boss UI Info
-  const [bossInfo, setBossInfo] = useState<{ name?: string; hp?: number; maxHp?: number }>({});
+  const [bossInfo, setBossInfo] = useState<{
+    name?: string;
+    hp?: number;
+    maxHp?: number;
+    code?: string;
+    phase?: number;
+  }>({});
 
   // Quests
   const [quests, setQuests] = useState<QuestState[]>([
@@ -121,6 +129,30 @@ export default function App() {
   const [dashCdTotal, setDashCdTotal] = useState<number>(2.5);
   const hardcoreSkillsTriggeredRef = useRef<boolean>(false);
 
+  // Global Ranking System State
+  const [isRankingOpen, setIsRankingOpen] = useState<boolean>(false);
+  const [rankElapsed, setRankElapsed] = useState<number>(0);
+  const [rankClearTime, setRankClearTime] = useState<number>(0);
+
+  // Track whether the player has finished picking skills and blueprints
+  const isSkillsReady = !isSkillSelectOpen && pendingSkillSelections === 0 && !isBlueprintSelectionOpen;
+
+  // Boss Spawn Aura state (3 seconds full-screen aura)
+  const [bossSpawnAura, setBossSpawnAura] = useState<'STARLIGHT' | 'ERROR' | null>(null);
+
+  const handleBossSpawned = useCallback((bossType: 'STARLIGHT' | 'ERROR') => {
+    setBossSpawnAura(bossType);
+    if (bossType === 'STARLIGHT') {
+      sound.playPhaseShift('STARLIGHT');
+    } else {
+      sound.playPhaseShift('ERROR');
+    }
+    const timer = setTimeout(() => {
+      setBossSpawnAura(null);
+    }, 3000); // 3 seconds intense full-screen aura
+    return () => clearTimeout(timer);
+  }, []);
+
   // Blueprint Synergies & Stats Calculation
   const activeSynergies = useMemo(() => {
     return checkSatisfiedSynergies(ownedBlueprints);
@@ -151,19 +183,55 @@ export default function App() {
     };
   }, [stats, bpStats]);
 
+  // 특수 조합 등으로 최대 체력이 늘어나면 늘어난 칸만큼 현재 체력도 즉시 채워줌 (예: 6칸에서 11칸으로 늘면 11/11 완충)
+  const prevMaxHpRef = useRef<number>(effectiveStats.maxHp);
+  useEffect(() => {
+    const prevMax = prevMaxHpRef.current;
+    const currentMax = effectiveStats.maxHp;
+    if (currentMax > prevMax) {
+      const diff = currentMax - prevMax;
+      setHp((currentHp) => Math.min(currentMax, currentHp + diff));
+    } else if (currentMax < prevMax) {
+      setHp((currentHp) => Math.min(currentMax, currentHp));
+    }
+    prevMaxHpRef.current = currentMax;
+  }, [effectiveStats.maxHp]);
+
+  // Active Boss Type for BGM pitch modulation & screen hue shift
+  const activeBossType: 'STARLIGHT' | 'ERROR' | null = useMemo(() => {
+    if (bossInfo.name && bossInfo.hp !== undefined && bossInfo.hp > 0) {
+      if (bossInfo.code === '3-11' || bossInfo.name.includes('별빛')) return 'STARLIGHT';
+      if (bossInfo.code === 'ERROR' || bossInfo.name.toUpperCase().includes('ERROR')) return 'ERROR';
+    }
+    return null;
+  }, [bossInfo.name, bossInfo.hp, bossInfo.code]);
+
+  useEffect(() => {
+    sound.setBossTheme(activeBossType);
+  }, [activeBossType]);
+
+  useEffect(() => {
+    sound.enabled = soundEnabled;
+    if (soundEnabled) {
+      sound.startBgm();
+    } else {
+      sound.stopBgm();
+    }
+  }, [soundEnabled]);
+
   // Show wave banner briefly when wave starts and restore all HP on stage change
   useEffect(() => {
     setShowWaveBanner(true);
     const timer = setTimeout(() => setShowWaveBanner(false), 4500);
 
     if (currentWave !== lastHealedWaveRef.current) {
-      setHp(stats.maxHp);
+      setHp(effectiveStats.maxHp);
       addNotification("❤️ 다음 스테이지 진입! 모든 체력이 회복되었습니다.", "❇️", "emerald");
       lastHealedWaveRef.current = currentWave;
     }
 
     return () => clearTimeout(timer);
-  }, [currentWave, stats.maxHp, addNotification]);
+  }, [currentWave, effectiveStats.maxHp, addNotification]);
 
   // --- XP & LEVEL UP HANDLING ---
   const addXp = useCallback((amount: number) => {
@@ -178,12 +246,12 @@ export default function App() {
         setLevel(newLevel);
         setUnspentPoints((pts) => pts + levelDiff);
         // Also heal player a bit upon leveling up!
-        setHp((h) => Math.min(stats.maxHp, h + 1));
+        setHp((h) => Math.min(effectiveStats.maxHp, h + 1));
       }
 
       return newTotal;
     });
-  }, [stats.maxHp]);
+  }, [effectiveStats.maxHp]);
 
   // --- AUTOMATIC RANDOM STAT UPGRADE UPON LEVEL UP ---
   useEffect(() => {
@@ -353,6 +421,11 @@ export default function App() {
       setCoupons(3);
       setOwnedBlueprints([]);
       setIsBlueprintSelectionOpen(true);
+    } else if (gameMode === 'RANK') {
+      // 랭크 모드: 시작 후 20회 스킬을 획득 후 시작
+      setPendingSkillSelections(20);
+      triggerNextSkillDraw();
+      addNotification('⭐ 랭크 모드 돌입: 스킬 20회 선택 혜택이 주어집니다!', '🏆', 'amber');
     }
   };
 
@@ -430,7 +503,18 @@ export default function App() {
 
   // --- TICK COOL DOWNS & REGEN (Every 1 second) ---
   useEffect(() => {
-    if (playerClass === null || isStatsOpen || isQuestsOpen || isCodexOpen || isSkillSelectOpen || isGameOverOpen) return;
+    if (
+      playerClass === null ||
+      isStatsOpen ||
+      isQuestsOpen ||
+      isCodexOpen ||
+      isSkillSelectOpen ||
+      isGameOverOpen ||
+      isBlueprintSelectionOpen ||
+      isBlueprintInventoryOpen ||
+      isRankingOpen
+    )
+      return;
     const interval = setInterval(() => {
       // Tick skill cooldowns
       setAcquiredSkills((prev) =>
@@ -453,89 +537,30 @@ export default function App() {
         if (prevHp <= 0) return prevHp;
         const baseSeconds = playerClass ? CLASS_BASE_STATS[playerClass].regenSeconds : 10;
         const healRatePerSec = (1 / baseSeconds) * stats.regenSpeed;
-        return Math.min(stats.maxHp, prevHp + healRatePerSec);
+        return Math.min(effectiveStats.maxHp, prevHp + healRatePerSec);
       });
     }, 1000);
 
     return () => clearInterval(interval);
   }, [
     stats.regenSpeed,
-    stats.maxHp,
+    effectiveStats.maxHp,
     playerClass,
     isStatsOpen,
     isQuestsOpen,
     isCodexOpen,
     isSkillSelectOpen,
     isGameOverOpen,
+    isBlueprintSelectionOpen,
+    isBlueprintInventoryOpen,
+    isRankingOpen,
   ]);
-
-  // --- ENEMY KILLED CALLBACK ---
-  const handleEnemyKilled = useCallback((enemy: EnemyEntity) => {
-    setEnemiesKilled((prev) => prev + 1);
-    addXp(enemy.xp);
-
-    if (enemy.isBoss) {
-      setBossesKilled((prev) => prev + 1);
-
-      // Check Last Strike (10-5) revival check
-      const hasLastStrikeGhost = activeStatusEffects.some((e) => e.type === 'REVIVAL_GHOST');
-      if (hasLastStrikeGhost) {
-        setHp(stats.maxHp);
-        setActiveStatusEffects((prev) => prev.filter((e) => e.type !== 'REVIVAL_GHOST'));
-      }
-    }
-
-    if (enemy.category === 'BUG') {
-      setKilledBugCount((prev) => prev + 1);
-    }
-
-    // Update quest progress
-    setQuests((prevQuests) =>
-      prevQuests.map((q) => {
-        if (q.code === '5-1') {
-          const nextCnt = q.currentCount + 1;
-          return { ...q, currentCount: nextCnt, completed: nextCnt >= q.targetCount };
-        }
-        return q;
-      })
-    );
-  }, [addXp, activeStatusEffects, stats.maxHp]);
-
-  // --- TAKE DAMAGE & REVIVAL CHECK ---
-  const handlePlayerTakeDamage = useCallback((dmg: number, isInstantDeath = false) => {
-    setHp((prevHp) => {
-      const nextHp = isInstantDeath ? 0 : prevHp - dmg;
-      if (nextHp <= 0) {
-        // 하드코어 모드는 단 1회 사망 시 부활 없이 즉시 게임오버 및 리셋
-        if (gameMode === 'HARDCORE') {
-          setIsVictory(false);
-          setIsGameOverOpen(true);
-          return 0;
-        }
-
-        // Check Last Strike skill (10-5)
-        const hasLastStrike = acquiredSkills.some((s) => s.definition.code === '10-5');
-        const alreadyGhost = activeStatusEffects.some((e) => e.type === 'REVIVAL_GHOST');
-
-        if (hasLastStrike && !alreadyGhost && !isInstantDeath) {
-          setActiveStatusEffects((prev) => [
-            ...prev,
-            { type: 'REVIVAL_GHOST', duration: 10, maxDuration: 10 },
-          ]);
-          return 0.1; // surviving at 0.1 HP during ghost state
-        } else {
-          setIsVictory(false);
-          setIsGameOverOpen(true);
-          return 0;
-        }
-      }
-      return nextHp;
-    });
-  }, [acquiredSkills, activeStatusEffects, gameMode]);
 
   // --- WAVE CLEAR CALLBACK ---
   const handleWaveClear = useCallback(() => {
-    if (gameMode === 'BRAWL' || gameMode === 'HARDCORE') {
+    if (isGameOverOpen) return;
+
+    if (gameMode === 'BRAWL' || gameMode === 'HARDCORE' || gameMode === 'RANK') {
       sound.playLevelUp();
       setIsVictory(true);
       setIsGameOverOpen(true);
@@ -568,7 +593,83 @@ export default function App() {
       setIsVictory(true);
       setIsGameOverOpen(true);
     }
-  }, [currentWave, gameMode]);
+  }, [currentWave, gameMode, isGameOverOpen]);
+
+  // --- ENEMY KILLED CALLBACK ---
+  const handleEnemyKilled = useCallback((enemy: EnemyEntity) => {
+    setEnemiesKilled((prev) => prev + 1);
+    addXp(enemy.xp);
+
+    if (enemy.isBoss) {
+      setBossesKilled((prev) => prev + 1);
+
+      // Check Last Strike (10-5) revival check
+      const hasLastStrikeGhost = activeStatusEffects.some((e) => e.type === 'REVIVAL_GHOST');
+      if (hasLastStrikeGhost) {
+        setHp(effectiveStats.maxHp);
+        setActiveStatusEffects((prev) => prev.filter((e) => e.type !== 'REVIVAL_GHOST'));
+      }
+    }
+
+    // 최종 보스 처치 즉시 게임 클리어 처리 (별빛 또는 하드코어 ERROR)
+    if (enemy.code === '3-11') {
+      if (gameMode === 'RANK') {
+        setRankClearTime((prev) => (prev > 0 ? prev : rankElapsed));
+        handleWaveClear();
+      } else if (currentWave >= 6) {
+        handleWaveClear();
+      }
+    } else if (enemy.code === 'ERROR' && gameMode === 'HARDCORE') {
+      handleWaveClear();
+    }
+
+    if (enemy.category === 'BUG') {
+      setKilledBugCount((prev) => prev + 1);
+    }
+
+    // Update quest progress
+    setQuests((prevQuests) =>
+      prevQuests.map((q) => {
+        if (q.code === '5-1') {
+          const nextCnt = q.currentCount + 1;
+          return { ...q, currentCount: nextCnt, completed: nextCnt >= q.targetCount };
+        }
+        return q;
+      })
+    );
+  }, [addXp, activeStatusEffects, effectiveStats.maxHp, gameMode, currentWave, rankElapsed, handleWaveClear]);
+
+  // --- TAKE DAMAGE & REVIVAL CHECK ---
+  const handlePlayerTakeDamage = useCallback((dmg: number, isInstantDeath = false) => {
+    setHp((prevHp) => {
+      const nextHp = isInstantDeath ? 0 : prevHp - dmg;
+      if (nextHp <= 0) {
+        // 하드코어 모드는 단 1회 사망 시 부활 없이 즉시 게임오버 및 리셋
+        if (gameMode === 'HARDCORE') {
+          setIsVictory(false);
+          setIsGameOverOpen(true);
+          return 0;
+        }
+
+        // Check Last Strike skill (10-5)
+        const hasLastStrike = acquiredSkills.some((s) => s.definition.code === '10-5');
+        const alreadyGhost = activeStatusEffects.some((e) => e.type === 'REVIVAL_GHOST');
+
+        if (hasLastStrike && !alreadyGhost && !isInstantDeath) {
+          setActiveStatusEffects((prev) => [
+            ...prev,
+            { type: 'REVIVAL_GHOST', duration: 10, maxDuration: 10 },
+          ]);
+          return 0.1; // surviving at 0.1 HP during ghost state
+        } else {
+          setIsVictory(false);
+          setIsGameOverOpen(true);
+          return 0;
+        }
+      }
+      return nextHp;
+    });
+  }, [acquiredSkills, activeStatusEffects, gameMode]);
 
   // --- OPEN QUESTS (WITH DEVELOPER CHEAT TRACKING) ---
   const handleOpenQuests = () => {
@@ -628,6 +729,9 @@ export default function App() {
     setPlayerClass(null);
     setGameMode(null);
     setBrawlElapsed(0);
+    setRankElapsed(0);
+    setRankClearTime(0);
+    setIsRankingOpen(false);
     setCurrentWave(1);
     lastHealedWaveRef.current = 1;
     setTotalXp(0);
@@ -692,6 +796,15 @@ export default function App() {
     setIsBlueprintSelectionOpen(false);
 
     const synergies = checkSatisfiedSynergies(selectedBlueprintIds);
+    const newBpStats = calculateBlueprintStats(selectedBlueprintIds, synergies);
+    const newMaxHp = Math.max(1, stats.maxHp + newBpStats.hpFlat);
+    const oldMaxHp = effectiveStats.maxHp;
+
+    // 특수 조합 등으로 최대 체력이 증가했을 경우 전체 체력을 100% 완전 충전 (예: 11칸 중 11칸 채움)
+    if (newMaxHp > oldMaxHp) {
+      setHp(newMaxHp);
+    }
+
     if (synergies.length > 0) {
       addNotification(`📜 조합 ${synergies.length}개 완성 완료!`, '✨', 'emerald');
       sound.playLevelUp();
@@ -737,7 +850,10 @@ export default function App() {
         isQuestsOpen ||
         isCodexOpen ||
         isSkillSelectOpen ||
-        isGameOverOpen
+        isGameOverOpen ||
+        isBlueprintSelectionOpen ||
+        isBlueprintInventoryOpen ||
+        isRankingOpen
       ) {
         return;
       }
@@ -778,6 +894,9 @@ export default function App() {
     isCodexOpen,
     isSkillSelectOpen,
     isGameOverOpen,
+    isBlueprintSelectionOpen,
+    isBlueprintInventoryOpen,
+    isRankingOpen,
   ]);
 
   const unclaimedQuestsCount = quests.filter((q) => q.completed && !q.claimed).length;
@@ -804,6 +923,7 @@ export default function App() {
             setIsBlueprintInventoryOpen(true);
           }
         }}
+        onOpenRanking={() => setIsRankingOpen(true)}
         blueprintCount={ownedBlueprints.length}
         coupons={coupons}
         gameMode={gameMode || 'STORY'}
@@ -812,6 +932,30 @@ export default function App() {
 
       {/* Main Canvas Arena & HUD Container */}
       <main className="relative flex-1 w-full overflow-hidden">
+        {/* Full-screen Subtle Ambient Hue Shift for Starlight & ERROR Boss Fights */}
+        {activeBossType === 'STARLIGHT' && (
+          <div className="absolute inset-0 pointer-events-none z-10 bg-[radial-gradient(ellipse_at_center,rgba(251,191,36,0.08)_0%,rgba(168,85,247,0.11)_65%,transparent_100%)] transition-opacity duration-1000" />
+        )}
+        {activeBossType === 'ERROR' && (
+          <div className="absolute inset-0 pointer-events-none z-10 bg-[radial-gradient(ellipse_at_center,rgba(239,68,68,0.09)_0%,rgba(6,182,212,0.08)_65%,transparent_100%)] transition-opacity duration-1000" />
+        )}
+        {/* Rank Mode Timeattack Widget */}
+        {gameMode === 'RANK' && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none animate-fade-in">
+            <div className="bg-slate-900/90 border border-amber-500/40 backdrop-blur-md px-4 py-2 rounded-2xl shadow-xl flex items-center gap-3">
+              <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+              <div className="text-left">
+                <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+                  별빛 보스전 타임어택
+                </div>
+                <div className="text-lg sm:text-xl font-black text-white tabular-nums tracking-wider font-mono">
+                  {rankElapsed.toFixed(2)}s
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Brawl Mode Timeline Gauge */}
         {gameMode === 'BRAWL' && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 w-full max-w-sm sm:max-w-md px-4 pointer-events-none animate-fade-in">
@@ -865,7 +1009,9 @@ export default function App() {
           isAttackPressed={isAttackPressed}
           activeSkillTrigger={activeSkillTrigger}
           onSkillTriggerHandled={() => setActiveSkillTrigger(null)}
-          onUpdateBossStatus={(name, bossHp, maxHp) => setBossInfo({ name, hp: bossHp, maxHp })}
+          onUpdateBossStatus={(name, bossHp, maxHp, code, phase) =>
+            setBossInfo({ name, hp: bossHp, maxHp, code, phase })
+          }
           onUpdateAttackCooldown={(remaining, total) => {
             setAttackCdRemaining(remaining);
             setAttackCdTotal(total);
@@ -880,12 +1026,18 @@ export default function App() {
             isGameOverOpen ||
             isBlueprintSelectionOpen ||
             isBlueprintInventoryOpen ||
+            isRankingOpen ||
             gameMode === null
           }
           playerClass={playerClass || 'ASSASSIN'}
           killedBugCount={killedBugCount}
           gameMode={gameMode}
           onUpdateBrawlTime={setBrawlElapsed}
+          onUpdateRankTime={setRankElapsed}
+          onRankCleared={(clearSec) => {
+            setRankClearTime(clearSec);
+            setRankElapsed(clearSec);
+          }}
           dashTrigger={dashTrigger}
           onUpdateDashCooldown={(remaining, total) => {
             setDashCdRemaining(remaining);
@@ -907,6 +1059,8 @@ export default function App() {
           bossName={bossInfo.name}
           bossHp={bossInfo.hp}
           bossMaxHp={bossInfo.maxHp}
+          bossCode={bossInfo.code}
+          bossPhase={bossInfo.phase}
           onUseSkill={(skillId) => {
             const skill = acquiredSkills.find((s) => s.id === skillId);
             if (skill && skill.currentCooldown <= 0) {
@@ -937,7 +1091,11 @@ export default function App() {
         {gameMode !== 'BRAWL' && gameMode !== 'HARDCORE' && <WaveBanner waveInfo={currentWaveConfig} visible={showWaveBanner} />}
 
         {/* Level Up & Resistance Random Stat Notifications */}
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-1.5 pointer-events-none select-none w-full max-w-xs sm:max-w-md px-4">
+        <div
+          className={`absolute ${
+            bossInfo.name && bossInfo.hp !== undefined && bossInfo.hp > 0 ? 'top-24 sm:top-28' : 'top-16'
+          } left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-1.5 pointer-events-none select-none w-full max-w-xs sm:max-w-md px-4 transition-all duration-300`}
+        >
           <AnimatePresence>
             {notifications.map((notif) => (
               <motion.div
@@ -999,6 +1157,9 @@ export default function App() {
         bossesKilled={bossesKilled}
         onRestart={handleRestart}
         gameMode={gameMode}
+        clearTime={gameMode === 'RANK' ? (rankClearTime || rankElapsed) : undefined}
+        playerClass={playerClass || undefined}
+        onOpenRanking={() => setIsRankingOpen(true)}
       />
 
       <BlueprintSelectionModal
@@ -1012,8 +1173,13 @@ export default function App() {
       <BlueprintInventoryModal
         isOpen={isBlueprintInventoryOpen}
         onClose={() => setIsBlueprintInventoryOpen(false)}
+        inventoryIds={ownedBlueprints}
         ownedBlueprints={ownedBlueprints}
         onOpenSelection={() => {
+          setIsBlueprintInventoryOpen(false);
+          setIsBlueprintSelectionOpen(true);
+        }}
+        onOpenCouponShop={() => {
           setIsBlueprintInventoryOpen(false);
           setIsBlueprintSelectionOpen(true);
         }}
@@ -1029,6 +1195,12 @@ export default function App() {
             setOwnedBlueprints([]);
           }
         }}
+        onOpenRanking={() => setIsRankingOpen(true)}
+      />
+
+      <RankingModal
+        isOpen={isRankingOpen}
+        onClose={() => setIsRankingOpen(false)}
       />
 
       <ClassSelectModal

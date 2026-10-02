@@ -13,3 +13,206 @@ html, body, #root {
   user-select: none;
 }
 
+@keyframes shimmer {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(240%); }
+}
+
+@keyframes starSpinSlow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes starTwinkle {
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+@keyframes glitchJitter {
+  0% { transform: translate(0, 0); }
+  20% { transform: translate(-2px, 1px); }
+  40% { transform: translate(2px, -1px); }
+  60% { transform: translate(-1px, 1px); }
+  80% { transform: translate(1px, -2px); }
+  100% { transform: translate(0, 0); }
+}
+
+@keyframes scanlineTravel {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(600%); }
+}
+
+@keyframes bugTwitch {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-5deg) scale(1.05); }
+  75% { transform: rotate(5deg) scale(0.98); }
+}
+
+.animate-shimmer {
+  animation: shimmer 2.8s infinite linear;
+}
+
+.animate-star-spin-slow {
+  animation: starSpinSlow 18s infinite linear;
+}
+
+.animate-star-twinkle {
+  animation: starTwinkle 2.2s infinite ease-in-out;
+}
+
+.animate-glitch-jitter {
+  animation: glitchJitter 0.4s infinite steps(2, start);
+}
+
+.animate-scanline {
+  animation: scanlineTravel 2.5s infinite linear;
+}
+
+.animate-bug-twitch {
+  animation: bugTwitch 1.5s infinite ease-in-out;
+}
+
+@keyframes glitchEdgePulse {
+  0%, 100% {
+    box-shadow: inset 0 0 35px rgba(239, 68, 68, 0.35), inset 0 0 20px rgba(6, 182, 212, 0.25);
+    opacity: 0.75;
+  }
+  25% {
+    box-shadow: inset 0 0 55px rgba(239, 68, 68, 0.6), inset 0 0 30px rgba(6, 182, 212, 0.45);
+    opacity: 0.95;
+    transform: translate(-1px, 1px);
+  }
+  50% {
+    box-shadow: inset 0 0 30px rgba(6, 182, 212, 0.4), inset 0 0 15px rgba(239, 68, 68, 0.3);
+    opacity: 0.65;
+    transform: translate(1px, -1px);
+  }
+  75% {
+    box-shadow: inset 0 0 60px rgba(239, 68, 68, 0.65), inset 0 0 40px rgba(6, 182, 212, 0.5);
+    opacity: 1;
+    transform: translate(-2px, -1px);
+  }
+}
+
+@keyframes sparkleGlowSweep {
+  0% {
+    background-position: -200% 0;
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    background-position: 200% 0;
+    opacity: 0.4;
+  }
+}
+
+@keyframes phaseAlertBurst {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  30% {
+    transform: scale(1.08);
+    filter: brightness(1.7) drop-shadow(0 0 30px rgba(251, 191, 36, 0.9));
+  }
+  60% {
+    transform: scale(1.03);
+    filter: brightness(1.3) drop-shadow(0 0 18px rgba(251, 191, 36, 0.6));
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes phaseAlertGlitchBurst {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  20% {
+    transform: scale(1.09) translate(-3px, 2px);
+    filter: brightness(1.8) drop-shadow(0 0 30px rgba(239, 68, 68, 0.95)) drop-shadow(0 0 20px rgba(6, 182, 212, 0.9));
+  }
+  40% {
+    transform: scale(1.05) translate(3px, -2px);
+    filter: brightness(1.5) drop-shadow(0 0 22px rgba(6, 182, 212, 0.9));
+  }
+  70% {
+    transform: scale(1.02) translate(-1px, 1px);
+    filter: brightness(1.2);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+.animate-glitch-edge {
+  animation: glitchEdgePulse 1.2s infinite ease-in-out;
+}
+
+.animate-sparkle-sweep {
+  animation: sparkleGlowSweep 3.5s infinite linear;
+}
+
+.animate-phase-starlight {
+  animation: phaseAlertBurst 1s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.animate-phase-error {
+  animation: phaseAlertGlitchBurst 1s steps(4, end);
+}
+
+@keyframes goldenMistBillow {
+  0% {
+    transform: scale(1) translateY(0) rotate(0deg);
+    opacity: 0.65;
+  }
+  50% {
+    transform: scale(1.15) translateY(-8px) rotate(1deg);
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(1) translateY(0) rotate(0deg);
+    opacity: 0.65;
+  }
+}
+
+@keyframes digitalNoiseFlicker {
+  0% {
+    opacity: 0.85;
+    transform: translateY(0);
+  }
+  20% {
+    opacity: 0.98;
+    transform: translateY(-2px);
+  }
+  40% {
+    opacity: 0.75;
+    transform: translateY(2px);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+  80% {
+    opacity: 0.8;
+    transform: translateY(1px);
+  }
+  100% {
+    opacity: 0.85;
+    transform: translateY(0);
+  }
+}
+
+.animate-golden-mist {
+  animation: goldenMistBillow 2.8s infinite ease-in-out;
+}
+
+.animate-digital-noise {
+  animation: digitalNoiseFlicker 0.12s infinite steps(2, start);
+}
+

@@ -14,6 +14,7 @@ interface NavbarProps {
   onOpenStats: () => void;
   onRestart: () => void;
   onOpenBlueprints?: () => void;
+  onOpenRanking?: () => void;
   blueprintCount?: number;
   coupons?: number;
   gameMode?: string;
@@ -32,6 +33,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenStats,
   onRestart,
   onOpenBlueprints,
+  onOpenRanking,
   blueprintCount = 0,
   coupons = 0,
   gameMode = 'STORY',
@@ -50,7 +52,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           <p className="text-[9px] sm:text-[11px] text-slate-400 font-medium flex items-center gap-1 sm:gap-1.5">
             <span className="hidden sm:inline">실시간 액션 디펜스</span>
             <span className="hidden sm:inline text-slate-600">•</span>
-            {gameMode === 'HARDCORE' ? (
+            {gameMode === 'RANK' ? (
+              <span className="text-amber-400 font-bold flex items-center gap-1">
+                ⭐ 랭크 모드 (별빛전)
+              </span>
+            ) : gameMode === 'HARDCORE' ? (
               <span className="text-rose-400 font-bold flex items-center gap-1">
                 💀 하드코어
               </span>
@@ -143,6 +149,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
           <span className="hidden md:inline">도감/규칙</span>
         </button>
+
+        {/* Global Ranking button */}
+        {onOpenRanking && (
+          <button
+            onClick={onOpenRanking}
+            className="px-2 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-amber-500/40 text-amber-300 hover:text-amber-200 font-bold text-[11px] sm:text-xs flex items-center gap-1.5 transition-all shadow-sm"
+            title="글로벌 랭킹 (Top 10)"
+          >
+            <Trophy className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">랭킹</span>
+          </button>
+        )}
 
         {/* Sound toggle */}
         <button
